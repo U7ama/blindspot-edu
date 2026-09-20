@@ -1,0 +1,8 @@
+[Unit]
+Description=Blindspot verified SQLite backup
+[Service]
+Type=oneshot
+User=blindspot
+WorkingDirectory=/opt/blindspot
+EnvironmentFile=/etc/blindspot.env
+ExecStart=/opt/blindspot/.venv/bin/python scripts/backup.py /var/lib/blindspot/blindspot.db /var/lib/blindspot/backup.db --s3-bucket ${S3_BUCKET_NAME} --s3-key backups/latest.db

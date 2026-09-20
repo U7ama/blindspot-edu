@@ -1,0 +1,7 @@
+Original development sample script, written for Blindspot Edu. This is not a university lecture or student-pilot evidence. Record this script yourself, or obtain a separately documented original narration. Real source timestamps must come from transcribing that recording.
+
+Today we are comparing recipes using ratios. A recipe with two cups of flour for one cup of milk has a flour-to-milk ratio of two to one. Another recipe with four cups of flour for two cups of milk has the same ratio. We use equivalent fractions to compare the recipes.
+
+When both quantities increase by the same factor, the ratio remains unchanged. Doubling both quantities lets us make a larger batch while preserving the proportions. If we doubled only the flour, the proportions would change. That is why scaling a recipe requires multiplying every ingredient by the same factor.
+
+Now consider three cups of flour and two cups of milk. This recipe is different from the first recipe. We can compare the flour-to-milk ratios to describe the difference. Think about what equivalent fractions would tell you about these comparisons.

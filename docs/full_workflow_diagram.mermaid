@@ -1,0 +1,57 @@
+flowchart TD
+    subgraph OFFLINE["OFFLINE PROCESSING — runs once per uploaded lecture"]
+        A([Student uploads lecture audio]):::terminal --> B[Backend stores file<br/>storage.py]:::process
+        B --> C[Background job starts]:::process
+        C --> D[Transcribe audio<br/>transcription.py]:::process
+        D --> E[Generate embeddings<br/>per transcript segment]:::process
+        E --> F[Generate Learning Plan<br/>planning.py]:::process
+        F --> G[Detect gaps —<br/>under-explained concepts]:::process
+        F --> H[Generate quiz bank<br/>MCQs]:::process
+        G --> I[Build knowledge graph<br/>graph.py]:::process
+
+        E --> J[(Transcript +<br/>embeddings)]:::storage
+        F --> K[(Learning plan)]:::storage
+        G --> L[(Gap concepts)]:::storage
+        H --> M[(Quiz items)]:::storage
+        I --> N[(Graph nodes / edges)]:::storage
+
+        J & K & L & M & N --> O([Lecture status: READY]):::terminal
+    end
+
+    O --> P([Student opens lecture,<br/>starts a live session]):::terminal
+
+    subgraph LIVE["LIVE TEACHING SESSION — orchestrator.py, one session at a time"]
+        P --> Q[WebSocket connects]:::process
+        Q --> R[Orchestrator loads<br/>the Learning Plan]:::process
+        R --> S[["Emit: phase_started"]]:::event
+        S --> T[TTS speaks the phase's<br/>teaching script — tts.py]:::process
+        T --> U[["Emit: awaiting_command"]]:::event
+        U --> V{Student command?}:::decision
+
+        V -->|"next"| W{More phases left?}:::decision
+        W -->|yes| S
+        W -->|no| X[["Emit: session_ended"]]:::event
+
+        V -->|"explain again"| T
+
+        V -->|"show me where<br/>you learned that"| Y[Search transcript<br/>embeddings]:::process
+        Y --> Z[["Emit: jumped_to_timestamp"]]:::event
+        Z --> AA[Frontend seeks audio<br/>player to that moment]:::process
+        AA --> U
+
+        V -->|"quiz me"| AB[["Emit: quiz_started"]]:::event
+        AB --> AC[Student answers<br/>the MCQ]:::process
+        AC --> AD[Grade answer,<br/>store QuizResult]:::process
+        AD --> U
+
+        V -.->|"free question<br/>(should-have)"| AE[LLM answers using<br/>current phase context]:::process
+        AE -.-> U
+    end
+
+    X --> AF([Student can revisit<br/>notes / graph anytime]):::terminal
+
+    classDef process fill:#e0f2f1,stroke:#00695c,color:#004d40,stroke-width:1px;
+    classDef storage fill:#ede7f6,stroke:#4527a0,color:#311b92,stroke-width:1px;
+    classDef decision fill:#fff8e1,stroke:#f57f17,color:#e65100,stroke-width:1px;
+    classDef event fill:#fce4ec,stroke:#ad1457,color:#880e4f,stroke-width:1px;
+    classDef terminal fill:#eceff1,stroke:#37474f,color:#263238,stroke-width:1px;

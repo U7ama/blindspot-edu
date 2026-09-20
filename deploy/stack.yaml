@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Blindspot Edu pilot host, private media and bounded budget. Public HTTPS is required for hackathon evaluation. Application is installed separately after cost and permission checks.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+Parameters:
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+  BudgetEmail:
+    Type: String
+    Default: ''
+    Description: Optional owner email for budget alerts; no secrets.
+  BedrockProfileId:
+    Type: String
+    Default: us.amazon.nova-lite-v1:0
+  BedrockModelId:
+    Type: String
+    Default: amazon.nova-lite-v1:0
+Conditions:
+  HasBudgetEmail: !Not [!Equals [!Ref BudgetEmail, '']]
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Metadata:
+      com.aws.cloudformation.Context: {why: Dedicated small pilot network, must: No NAT gateway or load balancer charges}
+    Properties:
+      CidrBlock: 10.71.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+  Gateway:
+    Type: AWS::EC2::InternetGateway
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref Vpc, InternetGatewayId: !Ref Gateway}
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.71.1.0/24
+  Routes:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties: {RouteTableId: !Ref Routes, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref Gateway}
+  RouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref Routes, SubnetId: !Ref Subnet}
+  Media:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context: {why: Private recordings and backups, must: Retain data and prohibit public access}
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: IncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+            NoncurrentVersionExpiration: {NoncurrentDays: 14}
+  MediaPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Media
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt Media.Arn, !Sub '${Media.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+  Role:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context: {why: Short-lived instance credentials, must: No embedded keys or full-service access policies}
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns: [!Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore']
+      Policies:
+        - PolicyName: ApplicationResources
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub '${Media.Arn}/*'
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt Media.Arn
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockProfileId}'
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockModelId}'
+              - Effect: Allow
+                Action: polly:SynthesizeSpeech
+                Resource: '*'
+  Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: {Roles: [!Ref Role]}
+  WebSecurity:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Explicit public app requirement; 80 only redirects and obtains TLS certificates
+        must: No public SSH or application/database ports
+    Properties:
+      GroupDescription: Public HTTPS and HTTP redirect only; administration via SSM
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
+  Host:
+    Type: AWS::EC2::Instance
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context: {why: Small CPU transcription and app host, must: Standard CPU credits and encrypted persistent disk; benchmark before launch}
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: t3.medium
+      IamInstanceProfile: !Ref Profile
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref WebSecurity]
+      CreditSpecification: {CPUCredits: standard}
+      MetadataOptions: {HttpTokens: required, HttpPutResponseHopLimit: 2, HttpEndpoint: enabled}
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: {VolumeSize: 30, VolumeType: gp3, Encrypted: true, DeleteOnTermination: false}
+      Tags: [{Key: Name, Value: !Sub '${AWS::StackName}-app'}]
+  PublicAddress:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties: {Domain: vpc, InstanceId: !Ref Host}
+  Budget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-pilot'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: 50, Unit: USD}
+      NotificationsWithSubscribers: !If
+        - HasBudgetEmail
+        - - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 20, ThresholdType: ABSOLUTE_VALUE}
+            Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+          - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 35, ThresholdType: ABSOLUTE_VALUE}
+            Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+          - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 45, ThresholdType: ABSOLUTE_VALUE}
+            Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+        - !Ref AWS::NoValue
+Outputs:
+  InstanceId: {Description: SSM administration target, Value: !Ref Host}
+  PublicIp: {Description: Point the approved hostname here, Value: !Ref PublicAddress}
+  MediaBucket: {Description: Set S3_BUCKET_NAME to this private bucket, Value: !Ref Media}

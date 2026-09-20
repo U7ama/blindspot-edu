@@ -1,0 +1,21 @@
+[Unit]
+Description=Blindspot durable processing worker
+After=blindspot-api.service
+[Service]
+User=blindspot
+Group=blindspot
+WorkingDirectory=/opt/blindspot
+EnvironmentFile=/etc/blindspot.env
+Environment=HF_HOME=/var/lib/blindspot/models
+ExecStart=/opt/blindspot/.venv/bin/python -m backend.app.adaptive.worker
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/blindspot
+MemoryMax=1800M
+CPUQuota=100%
+[Install]
+WantedBy=multi-user.target
