@@ -91,3 +91,18 @@ def test_chunked_body_limit(client,monkeypatch):
     client.post('/api/v2/invite',json={'code':'test-invitation'})
     monkeypatch.setenv('MAX_UPLOAD_BYTES','10')
     assert client.post('/api/v2/recordings?filename=a.wav',content=iter([b'x'*6,b'y'*6])).status_code==413
+
+
+def test_disconnected_upload_is_not_queued(client, monkeypatch):
+    from starlette.requests import Request, ClientDisconnect
+    client.post('/api/v2/invite', json={'code': 'test-invitation'})
+    async def interrupted(self):
+        yield b'partial recording'
+        raise ClientDisconnect()
+    monkeypatch.setattr(Request, 'stream', interrupted)
+    response = client.post('/api/v2/recordings?filename=interrupted.mp4', content=b'x')
+    assert response.status_code == 400
+    assert 'Upload interrupted' in response.json()['detail']
+    with SessionLocal() as db:
+        assert db.query(Recording).count() == 0
+        assert db.query(Job).count() == 0

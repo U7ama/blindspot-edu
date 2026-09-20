@@ -9,6 +9,7 @@ import time
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
+from starlette.requests import ClientDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, text
 from backend.app.core.db import get_db
@@ -110,11 +111,14 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
     maximum = int(os.getenv('MAX_UPLOAD_BYTES', '104857600'))
     size = 0
     with tempfile.NamedTemporaryFile(suffix=suffix) as file:
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > maximum:
-                raise HTTPException(413, 'Recording exceeds the upload size limit')
-            file.write(chunk)
+        try:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > maximum:
+                    raise HTTPException(413, 'Recording exceeds the upload size limit')
+                file.write(chunk)
+        except ClientDisconnect as exc:
+            raise HTTPException(400, 'Upload interrupted before completion. Please retry the recording.') from exc
         file.flush()
         try:
             duration = await asyncio.to_thread(probe, file.name)

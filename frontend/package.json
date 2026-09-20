@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
-    "start": "next start",
+    "start": "node .next/standalone/server.js",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postbuild": "node scripts/prepare-standalone.mjs",
+    "prestart": "node scripts/prepare-standalone.mjs"
   },
   "dependencies": {
     "next": "^16.3.4",
