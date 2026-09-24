@@ -284,7 +284,16 @@ def compile_document(segments: list[Segment]) -> Document:
         for chunk_index, chunk in enumerate(chunks):
             report('prerequisites', 'Checking whether prerequisites are explained elsewhere.', candidate_index * len(chunks) + chunk_index, len(candidates) * len(chunks), 'checks')
             allowed = {s.id for s in chunk}
-            verdict = call('Does this window actually explain the named prerequisite, rather than just mention it? Return explained=true only with evidence_ids containing the exact segment IDs that explain it.', {'concept': c.name, 'segments': [s.model_dump() for s in chunk]}, WindowVerdict, 2048)
+            window_prompt = (
+                'Does this window actually explain the named prerequisite, rather than just mention it? '
+                'Return compact JSON only without reasoning: {"explained": true/false, "evidence_ids": [...]}. '
+                'Set explained=true only with evidence_ids containing the exact segment IDs that explain it.'
+            )
+            try:
+                verdict = call(window_prompt, {'concept': c.name, 'segments': [s.model_dump() for s in chunk]}, WindowVerdict, 4096)
+            except GenerationValidationError:
+                logger.warning('WindowVerdict validation failed for concept %s on window %d; defaulting to unexplained', c.name, chunk_index)
+                verdict = WindowVerdict(explained=False, evidence_ids=[])
             valid = [i for i in verdict.evidence_ids if i in allowed]
             if verdict.explained and valid:
                 supporting.extend(valid)

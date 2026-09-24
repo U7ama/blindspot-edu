@@ -293,3 +293,29 @@ def test_failed_optional_checkpoint_does_not_skip_next_checkpoint(monkeypatch):
     assert seen == ['blocks', 'backups']
     assert document.phases[0].prerequisite_ids == ['backups']
     assert document.concepts[1].remediation is not None
+
+
+def test_window_verdict_validation_failure_falls_back(monkeypatch):
+    segments = [
+        Segment(id='s1', start=0, end=5, text='First concept introduction.'),
+        Segment(id='s2', start=10, end=20, text='Second concept detail.'),
+    ]
+    def fake(prompt, data, shape, tokens=4096, **kwargs):
+        if shape is c.CoverageBatch:
+            return c.CoverageBatch(
+                items=[c.CoverageItem(name='Topic', explanation='Coherent topic', evidence_ids=[data[0]['id']], possibly_missing=True)],
+                teachable_evidence_ids=[data[0]['id']]
+            )
+        if shape is c.CandidateList:
+            return c.CandidateList(concepts=[Concept(id='topic', name='Topic', coverage='under_explained', reason='Assumed', evidence_ids=['s1'])])
+        if shape is c.WindowVerdict:
+            raise c.GenerationValidationError('WindowVerdict')
+        if shape is c.Plan:
+            return c.Plan(phases=[Phase(id='p', title='Topic', teaching_script='Coherent topic explained.', evidence_ids=['s1'])])
+        return c.Verdict(supported=True, reason='Supported')
+    monkeypatch.setattr(c, 'windows', lambda s: [[s[0]], [s[1]]])
+    monkeypatch.setattr(c, 'call', fake)
+    doc = c.compile_document(segments)
+    assert len(doc.phases) == 1
+    assert doc.concepts[0].coverage != 'explained_elsewhere'
+
