@@ -170,13 +170,126 @@ def test_phase_repair_allows_rewritten_quiz_concept_id(monkeypatch):
         calls.append(shape)
         if shape is c.Verdict:
             return c.Verdict(supported=len(calls) == 3, reason='Unsupported')
-        repaired_quiz = Question(id='q1', concept_id='new-supported-concept', phase_id='p', purpose='phase', question='Supported question?', options=['A', 'B'], correct_index=1, explanation='New expl.')
+        repaired_quiz = Question(id='unexpected-new-id', concept_id='new-supported-concept', phase_id='p', purpose='phase', question='Supported question?', options=['A', 'B'], correct_index=1, explanation='New expl.')
         repaired = phase.model_copy(update={'teaching_script': 'The actual explanation.', 'quiz': repaired_quiz})
         kwargs['validator'](repaired)
         return repaired
     monkeypatch.setattr(c, 'call', fake)
     result = c.review_phase(phase, {'s': segment})
+    assert result.quiz.id == 'q1'
     assert result.quiz.concept_id == 'new-supported-concept'
     assert result.quiz.phase_id == 'p'
     assert result.quiz.purpose == 'phase'
 
+
+
+@pytest.mark.parametrize('failure_mode', ['rejected', 'invalid_output'])
+def test_unverified_optional_remediation_does_not_fail_verified_lesson(monkeypatch, failure_mode):
+    from backend.app.adaptive.contracts import Document, Remediation
+
+    segment = Segment(id='s', start=0, end=8, text='A disk stores data in blocks that the operating system reads and writes.')
+    concept = Concept(id='blocks', name='Block addressing', coverage='inferred_prerequisite', reason='Assumed by the lesson', evidence_ids=['s'])
+    phase = Phase(id='p', title='Disk basics', teaching_script='The operating system reads and writes disk blocks.', evidence_ids=['s'], prerequisite_ids=['blocks'])
+
+    def question(purpose):
+        return Question(id=f'q-{purpose}', concept_id='blocks', phase_id='p', purpose=purpose,
+                        question=f'Which choice explains {purpose} correctly?', options=['Correct', 'Incorrect'],
+                        correct_index=0, explanation='The first choice follows the example.')
+
+    remediation = Remediation(explanation='Blocks are addressable units on a disk.',
+                              worked_example='Reading block 5 retrieves the fifth stored unit.',
+                              simpler_explanation='Think of each block as a numbered box.',
+                              diagnostic=question('diagnostic'), reassessment=question('reassessment'),
+                              retry=question('retry'))
+
+    def fake(prompt, data, shape, tokens=4096, **kwargs):
+        if shape is c.CoverageBatch:
+            return c.CoverageBatch(items=[c.CoverageItem(name='Disk blocks', explanation='The operating system reads blocks.', evidence_ids=['s'], possibly_missing=False)], teachable_evidence_ids=['s'])
+        if shape is c.CandidateList:
+            return c.CandidateList(concepts=[concept])
+        if shape is c.WindowVerdict:
+            return c.WindowVerdict(explained=False)
+        if shape is c.Plan:
+            return c.Plan(phases=[phase])
+        if shape is c.Remediation:
+            if failure_mode == 'invalid_output':
+                raise c.GenerationValidationError('Remediation')
+            return remediation
+        if shape is c.Verdict:
+            return c.Verdict(supported=not prompt.startswith('Review this supplementary'), reason='Independent review')
+        raise AssertionError(shape)
+
+    monkeypatch.setattr(c, 'call', fake)
+    document = c.compile_document([segment])
+    Document.model_validate(document)
+    assert document.phases[0].prerequisite_ids == []
+    assert document.concepts[0].coverage == 'uncertain'
+    assert document.concepts[0].remediation is None
+
+
+def test_supplementary_questions_require_exact_associations_and_distinct_ids():
+    from backend.app.adaptive.contracts import Remediation
+
+    def question(purpose, *, phase_id='p', question_id=None):
+        return Question(id=question_id or purpose, concept_id='blocks', phase_id=phase_id,
+                        purpose=purpose, question=f'What does {purpose} mean here?',
+                        options=['Correct', 'Incorrect'], correct_index=0,
+                        explanation='The first option follows the worked example.')
+
+    lesson = Remediation(explanation='A disk block is an addressable unit.',
+                         worked_example='Reading block five retrieves one unit.',
+                         simpler_explanation='A block is like a numbered box.',
+                         diagnostic=question('diagnostic'),
+                         reassessment=question('reassessment'), retry=question('retry'))
+    c.validate_remediation(lesson, 'blocks', 'p')
+    lesson.reassessment.phase_id = 'wrong-phase'
+    with pytest.raises(ValueError, match='supplied concept_id'):
+        c.validate_remediation(lesson, 'blocks', 'p')
+    lesson.reassessment.phase_id = 'p'
+    lesson.retry.id = lesson.diagnostic.id
+    with pytest.raises(ValueError, match='distinct IDs'):
+        c.validate_remediation(lesson, 'blocks', 'p')
+
+
+def test_failed_optional_checkpoint_does_not_skip_next_checkpoint(monkeypatch):
+    from backend.app.adaptive.contracts import Document, Remediation
+
+    segment = Segment(id='s', start=0, end=8, text='The operating system reads disk blocks and stores backup copies.')
+    concepts = [Concept(id=cid, name=cid, coverage='inferred_prerequisite', reason='Assumed', evidence_ids=['s'])
+                for cid in ('blocks', 'backups')]
+    phase = Phase(id='p', title='Storage', teaching_script='The operating system reads disk blocks and stores backups.',
+                  evidence_ids=['s'], prerequisite_ids=['blocks', 'backups'])
+    def question(purpose):
+        return Question(id=f'backups-{purpose}', concept_id='backups', phase_id='p', purpose=purpose,
+                        question=f'Which answer describes {purpose} for backups?', options=['Correct', 'Incorrect'],
+                        correct_index=0, explanation='The first option follows the example.')
+    valid = Remediation(explanation='A backup is a separate copy of data.',
+                        worked_example='A copied file can be restored after deletion.',
+                        simpler_explanation='Keep a spare copy.', diagnostic=question('diagnostic'),
+                        reassessment=question('reassessment'), retry=question('retry'))
+    seen = []
+    def fake(prompt, data, shape, tokens=4096, **kwargs):
+        if shape is c.CoverageBatch:
+            return c.CoverageBatch(items=[], teachable_evidence_ids=['s'])
+        if shape is c.CandidateList:
+            return c.CandidateList(concepts=concepts)
+        if shape is c.WindowVerdict:
+            return c.WindowVerdict(explained=False)
+        if shape is c.Plan:
+            return c.Plan(phases=[phase])
+        if shape is c.Remediation:
+            cid = data['concept']['id']
+            seen.append(cid)
+            if cid == 'blocks':
+                raise c.GenerationValidationError('Remediation')
+            kwargs['validator'](valid)
+            return valid
+        if shape is c.Verdict:
+            return c.Verdict(supported=True)
+        raise AssertionError(shape)
+    monkeypatch.setattr(c, 'call', fake)
+    document = c.compile_document([segment])
+    Document.model_validate(document)
+    assert seen == ['blocks', 'backups']
+    assert document.phases[0].prerequisite_ids == ['backups']
+    assert document.concepts[1].remediation is not None

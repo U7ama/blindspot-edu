@@ -224,10 +224,9 @@ def review_phase(phase, segmap):
             if (repaired.quiz is None) != (original.quiz is None):
                 raise ValueError('Preserve whether the phase contains a quiz.')
             if repaired.quiz:
+                repaired.quiz.id = original.quiz.id
                 repaired.quiz.phase_id = original.id
                 repaired.quiz.purpose = 'phase'
-                if not repaired.quiz.id:
-                    repaired.quiz.id = original.quiz.id if original.quiz else f'q-{original.id}'
                 if not repaired.quiz.concept_id:
                     repaired.quiz.concept_id = original.quiz.concept_id if original.quiz else original.id
             validate_plan(Plan(phases=[repaired]), set(original.prerequisite_ids), set(segmap))
@@ -239,6 +238,15 @@ def review_phase(phase, segmap):
             'Do not add new evidence IDs, do not change the evidence list, and do not change any IDs or prerequisite associations.'
         )
         phase = call(prompt_repair, {'phase': original.model_dump(), 'excerpts': cited, 'review_feedback': verdict.reason}, Phase, 4096, validator=validate_repair)
+
+
+def validate_remediation(lesson, concept_id, phase_id):
+    questions = (lesson.diagnostic, lesson.reassessment, lesson.retry)
+    if len({q.id for q in questions}) != 3 or len({q.question.strip().lower() for q in questions}) != 3:
+        raise ValueError('Supplementary questions need distinct IDs and question text.')
+    for question, purpose in zip(questions, ('diagnostic', 'reassessment', 'retry')):
+        if question.concept_id != concept_id or question.phase_id != phase_id or question.purpose != purpose:
+            raise ValueError('Supplementary questions must use the supplied concept_id, phase_id and purpose.')
 
 
 def compile_document(segments: list[Segment]) -> Document:
@@ -293,7 +301,7 @@ def compile_document(segments: list[Segment]) -> Document:
         phase = review_phase(phase, segmap)
         plan.phases[phase_index] = phase
         cited = [segmap[i].model_dump() for i in phase.evidence_ids]
-        for cid in phase.prerequisite_ids:
+        for cid in list(phase.prerequisite_ids):
             if cid in attached:
                 raise ValueError('A prerequisite was assigned to multiple checkpoints')
             attached.add(cid)
@@ -304,16 +312,21 @@ def compile_document(segments: list[Segment]) -> Document:
                 continue
             report('verification', 'Building and reviewing prerequisite explanations and reassessment questions.', phase_index, len(plan.phases), 'phases')
             remediation_prompt = 'Create supplementary prerequisite teaching: a short explanation, worked example, simpler explanation, optional visual step list, and THREE genuinely different questions: diagnostic, reassessment (application), retry (another application). Each question needs a unique ID, exact concept_id and phase_id, matching purpose, options, correct_index and feedback. Do not attribute this new explanation to the lecturer.'
-            c.remediation = call(remediation_prompt, {'concept': c.model_dump(), 'phase_id': phase.id, 'excerpts': cited}, Remediation)
-            checked = call('Review this supplementary mini-lesson for conceptual correctness, clear worked example, unambiguous correct answers and distinct questions. This is supplementary teaching, not a claim it appeared in the lecture.', c.remediation.model_dump(), Verdict, 2048)
-            if not checked.supported:
-                repair_prompt = 'Correct this supplementary prerequisite teaching based on the review feedback. Ensure clear conceptual explanation, accurate worked example, and 3 distinct, unambiguous questions with valid correct answers.'
-                c.remediation = call(repair_prompt, {'concept': c.model_dump(), 'remediation': c.remediation.model_dump(), 'feedback': checked.reason}, Remediation)
+            try:
+                c.remediation = call(remediation_prompt, {'concept': c.model_dump(), 'phase_id': phase.id, 'excerpts': cited}, Remediation, validator=lambda lesson: validate_remediation(lesson, c.id, phase.id))
                 checked = call('Review this supplementary mini-lesson for conceptual correctness, clear worked example, unambiguous correct answers and distinct questions. This is supplementary teaching, not a claim it appeared in the lecture.', c.remediation.model_dump(), Verdict, 2048)
                 if not checked.supported:
-                    c.remediation = None
-                    c.coverage = 'uncertain'
-                    c.reason += ' Supplementary remediation could not be independently validated.'
+                    repair_prompt = 'Correct this supplementary prerequisite teaching based on the review feedback. Ensure clear conceptual explanation, accurate worked example, and 3 distinct, unambiguous questions with valid correct answers.'
+                    c.remediation = call(repair_prompt, {'concept': c.model_dump(), 'remediation': c.remediation.model_dump(), 'feedback': checked.reason}, Remediation, validator=lambda lesson: validate_remediation(lesson, c.id, phase.id))
+                    checked = call('Review this supplementary mini-lesson for conceptual correctness, clear worked example, unambiguous correct answers and distinct questions. This is supplementary teaching, not a claim it appeared in the lecture.', c.remediation.model_dump(), Verdict, 2048)
+                    if not checked.supported:
+                        raise GenerationValidationError('Supplementary lesson review')
+            except GenerationValidationError:
+                # An optional checkpoint must not invalidate an otherwise verified lecture.
+                c.remediation = None
+                c.coverage = 'uncertain'
+                c.reason += ' Supplementary remediation could not be independently validated.'
+                phase.prerequisite_ids.remove(cid)
     for c in candidates:
         if c.coverage in ('under_explained', 'inferred_prerequisite') and c.id not in attached:
             c.coverage = 'uncertain'
