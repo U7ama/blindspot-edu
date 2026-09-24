@@ -49,9 +49,9 @@ export const Footer: React.FC = () => {
           {/* Col 4: Community (2 cols) */}
           <div className="md:col-span-2 flex flex-col gap-3">
             <span className="text-xs font-bold uppercase tracking-wider text-white">Community</span>
-            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="text-xs hover:text-white transition-colors flex items-center gap-1.5">
+            <a href="https://github.com/U7ama/blindspot-edu" target="_blank" rel="noopener noreferrer" className="text-xs hover:text-white transition-colors flex items-center gap-1.5">
               <Github className="w-3.5 h-3.5" />
-              <span>GitHub</span>
+              <span>GitHub repository</span>
             </a>
             <span className="text-xs text-neutral-500">Documentation</span>
             <span className="text-xs text-neutral-500">Research Paper</span>
@@ -64,8 +64,8 @@ export const Footer: React.FC = () => {
             <span>&copy; {new Date().getFullYear()} Blindspot Edu. Built for the modern learner.</span>
           </div>
           <div className="flex items-center gap-6">
-            <span className="hover:text-neutral-400 transition-colors cursor-default">Privacy Protocol</span>
-            <span className="hover:text-neutral-400 transition-colors cursor-default">Terms of Service</span>
+            <Link href="/privacy" className="hover:text-neutral-300 transition-colors">Privacy Protocol</Link>
+            <Link href="/terms" className="hover:text-neutral-300 transition-colors">Terms of Service</Link>
           </div>
         </div>
       </div>

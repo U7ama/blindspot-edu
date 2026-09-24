@@ -15,7 +15,7 @@ from sqlalchemy import or_, text
 from backend.app.core.db import get_db
 from backend.app.services.storage import get_storage_adapter
 from backend.app.services.ai.llm import chat_completion
-from .models import Learner, Recording, LearningState, Attempt, Job, Asset
+from .models import Learner, Recording, LearningState, Attempt, Job, Asset, ProcessingProgress, ImportSource, EmailNotice, TranscriptCache
 from .contracts import Document
 from .session import command, answer, snapshot, public_document, TransitionError
 from .budget import actor, AllowanceExceeded
@@ -33,7 +33,7 @@ def identity(request: Request, response: Response, db=Depends(get_db)):
     if not learner:
         raw = secrets.token_urlsafe(32)
         key = hashlib.sha256(raw.encode()).hexdigest()
-        learner = Learner(id=key, preferences={'voice': 'Joanna', 'language': 'English'})
+        learner = Learner(id=key, preferences={'voice': 'Browser', 'language': 'English'})
         db.add(learner)
         db.commit()
         response.set_cookie(COOKIE, raw, httponly=True, secure=os.getenv('APP_ENV') == 'production', samesite='strict', max_age=60*60*24*60)
@@ -69,7 +69,8 @@ def summary(r):
 
 @router.get('/me')
 def me(learner=Depends(identity)):
-    return {'invited': learner.invited, 'preferences': learner.preferences, 'limits': {'upload_bytes': int(os.getenv('MAX_UPLOAD_BYTES', '104857600')), 'duration_seconds': int(os.getenv('MAX_DURATION_SECONDS', '3600'))}}
+    from .notifications import enabled
+    return {'email_notifications_enabled': bool(enabled()), 'invited': learner.invited, 'preferences': learner.preferences, 'limits': {'upload_bytes': int(os.getenv('MAX_UPLOAD_BYTES', '104857600')), 'duration_seconds': int(os.getenv('MAX_DURATION_SECONDS', '3600'))}}
 
 class Invite(BaseModel):
     code: str = Field(min_length=1, max_length=100)
@@ -84,13 +85,13 @@ def invite(body: Invite, learner=Depends(identity), db=Depends(get_db)):
     return {'invited': True}
 
 class Preferences(BaseModel):
-    voice: str = 'Joanna'
+    voice: str = 'Browser'
     language: str = 'English'
 
 @router.post('/preferences')
 def preferences(body: Preferences, learner=Depends(identity), db=Depends(get_db)):
-    if body.voice not in ('Joanna', 'Matthew') or body.language != 'English':
-        raise HTTPException(400, 'This release supports English with Joanna or Matthew')
+    if body.voice not in ('Joanna', 'Matthew', 'Browser') or body.language != 'English':
+        raise HTTPException(400, 'This release supports English with Joanna, Matthew, or Browser voice')
     learner.preferences = body.model_dump()
     db.commit()
     return learner.preferences
@@ -106,7 +107,7 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED or len(filename) > 200:
         raise HTTPException(400, 'Unsupported recording type')
-    if db.query(Recording).filter(Recording.owner_id == learner.id).count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '3')):
+    if db.query(Recording).filter(Recording.owner_id == learner.id, Recording.status != 'failed').count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
         raise HTTPException(429, 'Pilot upload allowance reached')
     maximum = int(os.getenv('MAX_UPLOAD_BYTES', '104857600'))
     size = 0
@@ -127,7 +128,7 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
         storage = get_storage_adapter()
         key = await asyncio.to_thread(storage.save, file.name, filename)
     transaction(db)
-    if db.query(Recording).filter(Recording.owner_id == learner.id).count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '3')):
+    if db.query(Recording).filter(Recording.owner_id == learner.id, Recording.status != 'failed').count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
         db.rollback()
         await asyncio.to_thread(storage.delete, key)
         raise HTTPException(429, 'Pilot upload allowance reached')
@@ -142,10 +143,106 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
         raise
     return summary(rec)
 
+
+class LinkImport(BaseModel):
+    url: str = Field(min_length=8, max_length=4096)
+    permission_confirmed: bool
+
+
+@router.post('/recordings/import', status_code=202)
+def import_link(body: LinkImport, learner=Depends(identity), db=Depends(get_db)):
+    from .imports import classify_url, ImportFailure
+    if not learner.invited:
+        raise HTTPException(403, 'Link imports are limited to invited pilot participants')
+    if not body.permission_confirmed:
+        raise HTTPException(400, 'Confirm you have permission to process this recording')
+    try:
+        kind, url = classify_url(body.url.strip())
+    except ImportFailure as exc:
+        raise HTTPException(400, str(exc)) from None
+    transaction(db)
+    if db.query(Recording).filter(Recording.owner_id == learner.id, Recording.status != 'failed').count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
+        raise HTTPException(429, 'Pilot upload allowance reached')
+    rid = uuid.uuid4().hex
+    rec = Recording(id=rid, owner_id=learner.id, title='YouTube recording' if kind == 'youtube' else 'Linked recording',
+                    storage_backend=get_storage_adapter().backend, object_key='', duration=0, status='queued')
+    db.add(rec)
+    db.add(Job(id=uuid.uuid4().hex, recording_id=rid))
+    db.add(ImportSource(recording_id=rid, url=url, kind=kind))
+    db.commit()
+    return summary(rec)
+
+
+@router.get('/recordings/{rid}/progress')
+def processing_progress(rid: str, learner=Depends(identity), db=Depends(get_db)):
+    rec = recording(db, rid, learner)
+    progress = db.get(ProcessingProgress, rid)
+    job = db.query(Job).filter_by(recording_id=rid).first()
+    notice = db.get(EmailNotice, rid) if rec.owner_id == learner.id else None
+    terminal = rec.status in ('ready', 'failed', 'insufficient_content')
+    return {
+        'status': rec.status,
+        'stage': rec.status if terminal or rec.status == 'queued' else (progress.stage if progress else 'processing'),
+        'detail': rec.error if terminal and rec.error else ('Your lesson is ready.' if rec.status == 'ready'
+            else 'Waiting for the processing worker.' if rec.status == 'queued'
+            else progress.detail if progress else 'Processing this recording.'),
+        'current': progress.current if progress and not terminal else None,
+        'total': progress.total if progress and not terminal else None,
+        'unit': progress.unit if progress and not terminal else None,
+        'updated_at': progress.updated_at if progress else rec.created_at,
+        'created_at': rec.created_at,
+        'worker_active': bool(job and job.status == 'running' and job.lease_until > time.time()),
+        'history': progress.history if progress else [],
+        'last_progress': {
+            'stage': progress.stage, 'detail': progress.detail,
+            'current': progress.current, 'total': progress.total, 'unit': progress.unit,
+        } if progress else None,
+        'email_status': notice.status if notice else None
+    }
+
+
+class EmailSubscription(BaseModel):
+    email: str | None = Field(default=None, max_length=254, pattern=r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}$")
+
+
+@router.post('/recordings/{rid}/notification')
+def subscribe(rid: str, body: EmailSubscription, learner=Depends(identity), db=Depends(get_db)):
+    from .notifications import enabled
+    transaction(db)
+    rec = recording(db, rid, learner)
+    if not learner.invited or rec.owner_id != learner.id or rec.public:
+        raise HTTPException(403, 'Email alerts are only available for your own recordings')
+    notice = db.get(EmailNotice, rid)
+    if notice and notice.attempts:
+        raise HTTPException(409, 'This notification has already been sent or is being delivered')
+    if body.email is None:
+        if notice:
+            db.delete(notice)
+        db.commit()
+        return {'status': 'cancelled'}
+    if not enabled():
+        raise HTTPException(503, 'Email delivery has not been configured. Browser and voice alerts remain available.')
+    if rec.status in ('failed', 'insufficient_content'):
+        raise HTTPException(409, 'Retry processing successfully before enabling an email alert')
+    if notice:
+        notice.email = body.email
+    else:
+        db.add(EmailNotice(recording_id=rid, email=body.email))
+    db.commit()
+    return {'status': 'pending'}
+
 @router.get('/recordings/{rid}')
 def get_recording(rid: str, learner=Depends(identity), db=Depends(get_db)):
     rec = recording(db, rid, learner)
-    return {**summary(rec), 'document': public_document(ready(rec)) if rec.status == 'ready' else None}
+    doc = public_document(ready(rec)) if rec.status == 'ready' else None
+    segments = []
+    if doc:
+        segments = doc.get('segments', []) if isinstance(doc, dict) else getattr(doc, 'segments', [])
+    else:
+        cached = db.get(TranscriptCache, rid)
+        if cached and cached.segments:
+            segments = cached.segments
+    return {**summary(rec), 'document': doc, 'segments': segments}
 
 @router.post('/recordings/{rid}/retry')
 def retry(rid: str, learner=Depends(identity), db=Depends(get_db)):
@@ -163,6 +260,8 @@ def retry(rid: str, learner=Depends(identity), db=Depends(get_db)):
 @router.get('/recordings/{rid}/media')
 def media(rid: str, learner=Depends(identity), db=Depends(get_db)):
     rec = recording(db, rid, learner)
+    if not rec.object_key:
+        raise HTTPException(409, 'The linked recording is still being downloaded')
     storage = get_storage_adapter(rec.storage_backend)
     url = storage.playback_url(rec.object_key)
     if url:
@@ -231,7 +330,7 @@ def submit(rid: str, body: Answer, learner=Depends(identity), db=Depends(get_db)
     return result
 
 class SourceQuery(BaseModel):
-    evidence_ids: list[str] = Field(default_factory=list, max_length=20)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=200)
 
 @router.post('/recordings/{rid}/source')
 def source(rid: str, body: SourceQuery, learner=Depends(identity), db=Depends(get_db)):
@@ -286,7 +385,7 @@ def narration(rid: str, body: Narration, learner=Depends(identity), db=Depends(g
         asset = narrate(db, rec, learner, text_content)
     finally:
         actor.reset(token)
-    return {'audio_url': f'/api/v2/assets/{asset.id}', 'cached': True, 'provider': 'polly'}
+    return {'audio_url': f'/api/v1/assets/{asset.id}', 'cached': True, 'provider': 'polly'}
 
 @router.get('/assets/{aid}')
 def asset(aid: str, learner=Depends(identity), db=Depends(get_db)):

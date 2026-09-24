@@ -47,6 +47,7 @@ export type Recording = {
   public: boolean;
   error: string | null;
   document?: Lesson | null;
+  segments?: Evidence[];
 };
 export type Active = {
   mode: string;
@@ -68,13 +69,14 @@ export type Session = {
   revision: number;
 };
 export type Me = {
+  email_notifications_enabled?: boolean;
   invited: boolean;
   preferences: { voice: string; language: string };
   limits: { upload_bytes: number; duration_seconds: number };
 };
 let boot: Promise<Me> | undefined;
 async function raw<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/v2${path}`, {
+  const response = await fetch(`/api/v1${path}`, {
     ...init,
     credentials: "same-origin",
     cache: "no-store",
@@ -112,19 +114,40 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
         },
   );
 }
-export async function upload(file: File) {
+export async function upload(file: File, onProgress?: (sent: number, total: number) => void, signal?: AbortSignal) {
   await me();
-  return raw<Recording>(
-    `/recordings?filename=${encodeURIComponent(file.name)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: file,
-    },
-  );
+  return new Promise<Recording>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const abort = () => xhr.abort();
+    const cleanup = () => signal?.removeEventListener("abort", abort);
+    xhr.open("POST", `/api/v1/recordings?filename=${encodeURIComponent(file.name)}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = e => onProgress?.(e.loaded, e.lengthComputable ? e.total : file.size);
+    xhr.onload = () => {
+      cleanup();
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(typeof data.detail === "string" ? data.detail : "Upload failed"));
+      } catch { reject(new Error("The server did not return a valid upload response.")); }
+    };
+    xhr.onerror = () => {cleanup();reject(new Error("Connection lost during upload. Please try again."));};
+    xhr.onabort = () => {cleanup();reject(new Error("Upload cancelled."));};
+    signal?.addEventListener("abort", abort, {once: true});
+    if (signal?.aborted) {cleanup();reject(new Error("Upload cancelled."));return;}
+    xhr.send(file);
+  });
 }
 export function timestamp(seconds: number) {
   return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60)
     .toString()
     .padStart(2, "0")}`;
 }
+
+export type ProcessingProgress = {
+  status: string; stage: string; detail: string; current: number | null; total: number | null;
+  unit: string | null; updated_at: number; created_at: number; worker_active: boolean;
+  history: {stage: string; detail: string; at: number}[]; email_status: string | null;
+  last_progress: {stage: string; detail: string; current: number | null; total: number | null; unit: string | null} | null;
+};

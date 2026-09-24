@@ -62,7 +62,58 @@ def test_provider_failure_preserves_saved_lesson(client,lecture,monkeypatch):
     def denied(*args,**kwargs):
         raise ClientError({'Error':{'Code':'AccessDeniedException','Message':'private provider detail'}},'Converse')
     monkeypatch.setattr(api,'chat_completion',denied)
-    result=client.post('/api/v2/recordings/lecture/question',json={'question':'Explain this step'})
+    result=client.post('/api/v1/recordings/lecture/question',json={'question':'Explain this step'})
     assert result.status_code==503
     assert 'private provider detail' not in result.text
-    assert client.get('/api/v2/recordings/lecture').status_code==200
+    assert client.get('/api/v1/recordings/lecture').status_code==200
+
+@pytest.mark.parametrize("provider, model", [("qwen", "qwen3.7-flash"), ("modelstudio", "kimi-k3")])
+def test_qwen_structured_request(monkeypatch, provider, model):
+    from types import SimpleNamespace
+    from pydantic import BaseModel
+    from backend.app.services.ai import llm
+    class Result(BaseModel):
+        answer: str
+    calls=[]
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(model=model,choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(content='{"answer":"one"}'))])
+    monkeypatch.setenv('LLM_PROVIDER',provider)
+    monkeypatch.setenv('LLM_MODEL',model)
+    monkeypatch.setattr(llm,'_get_client',lambda:SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    result=llm.chat_completion('Return JSON','One half plus one half?',response_model=Result,max_tokens=100)
+    assert result.answer=='one'
+    assert calls[0]['extra_body']=={'enable_thinking':False}
+    assert calls[0]['response_format']=={'type':'json_object'}
+    assert calls[0]['max_tokens']==100
+    if model == 'kimi-k3':
+        assert calls[0]['temperature']==0.0
+    monkeypatch.setenv('LLM_MODEL','different-model')
+    import pytest
+    with pytest.raises(ValueError,match='different model'):
+        llm.chat_completion('Return JSON','One half?',response_model=Result,max_tokens=100)
+
+
+def test_llm_cache_avoids_repeated_network_calls(monkeypatch):
+    from types import SimpleNamespace
+    from pydantic import BaseModel
+    from backend.app.services.ai import llm
+    class Output(BaseModel):
+        val: int
+    calls = []
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(model='test-m', choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content='{"val": 42}'))])
+    monkeypatch.setenv('LLM_PROVIDER', 'openai')
+    monkeypatch.setenv('LLM_MODEL', 'test-m')
+    monkeypatch.setattr(llm, '_get_client', lambda: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+
+    # First call: makes network request and caches result
+    res1 = llm.chat_completion('Unique Cache Test Prompt', 'input-1', response_model=Output, max_tokens=100)
+    assert res1.val == 42
+    assert len(calls) == 1
+
+    # Second call with same prompt: served directly from cache without hitting client
+    res2 = llm.chat_completion('Unique Cache Test Prompt', 'input-1', response_model=Output, max_tokens=100)
+    assert res2.val == 42
+    assert len(calls) == 1  # No additional network call

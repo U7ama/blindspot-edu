@@ -12,12 +12,12 @@ actor = ContextVar('usage_actor', default='worker')
 class AllowanceExceeded(RuntimeError):
     pass
 
-def reserve(service, input_units, output_units=0):
+def reserve(service, input_units, output_units=0, *, attempts=2):
     if service == 'polly':
         amount = input_units * float(os.getenv('POLLY_USD_PER_MILLION_CHARS', '16')) / 1_000_000
     else:
-        # UTF-8 bytes upper-bound tokens conservatively; reserve both SDK attempts.
-        amount = 2 * (input_units * float(os.getenv('LLM_INPUT_USD_PER_MILLION', '1')) + output_units * float(os.getenv('LLM_OUTPUT_USD_PER_MILLION', '8'))) / 1_000_000
+        # Callers with explicit retries reserve each attempt immediately before sending.
+        amount = attempts * (input_units * float(os.getenv('LLM_INPUT_USD_PER_MILLION', '1')) + output_units * float(os.getenv('LLM_OUTPUT_USD_PER_MILLION', '8'))) / 1_000_000
     with SessionLocal() as db:
         if db.bind.dialect.name == 'sqlite':
             db.execute(text('BEGIN IMMEDIATE'))
@@ -30,3 +30,20 @@ def reserve(service, input_units, output_units=0):
         db.add(entry)
         db.commit()
         return entry.id
+
+
+def reconcile(reservation_id, input_tokens, output_tokens):
+    """Replace one attempt's estimate with reported token cost; missing usage stays reserved."""
+    if any(type(n) is not int or n < 0 for n in (input_tokens, output_tokens)):
+        return
+    amount = (input_tokens * float(os.getenv('LLM_INPUT_USD_PER_MILLION', '1'))
+              + output_tokens * float(os.getenv('LLM_OUTPUT_USD_PER_MILLION', '8'))) / 1_000_000
+    with SessionLocal() as db:
+        if db.bind.dialect.name == 'sqlite':
+            db.execute(text('BEGIN IMMEDIATE'))
+        entry = db.get(Usage, reservation_id)
+        if entry and entry.service == 'llm':
+            entry.reserved_usd = amount
+            entry.input_units = input_tokens
+            entry.output_units = output_tokens
+            db.commit()

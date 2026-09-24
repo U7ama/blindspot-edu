@@ -4,17 +4,17 @@ from backend.main import app
 
 
 def resume(c):
-    response=c.post('/api/v2/recordings/lecture/session',json={})
+    response=c.post('/api/v1/recordings/lecture/session',json={})
     assert response.status_code==200,response.text
     return response.json()
 
 def cmd(c,s,action,target=None):
-    response=c.post('/api/v2/recordings/lecture/command',json={'action':action,'target':target,'revision':s['revision']})
+    response=c.post('/api/v1/recordings/lecture/command',json={'action':action,'target':target,'revision':s['revision']})
     assert response.status_code==200,response.text
     return response.json()
 
 def submit(c,s,index,request_id=None):
-    return c.post('/api/v2/recordings/lecture/answer',json={'question_id':s['active']['question_id'],'selected_index':index,'revision':s['revision'],'request_id':request_id or str(uuid.uuid4())})
+    return c.post('/api/v1/recordings/lecture/answer',json={'question_id':s['active']['question_id'],'selected_index':index,'revision':s['revision'],'request_id':request_id or str(uuid.uuid4())})
 
 def test_full_remediation_and_resume(client,lecture):
     s=resume(client)
@@ -45,7 +45,7 @@ def test_full_remediation_and_resume(client,lecture):
     assert not s['ended'] and s['progress']=={} and s['phase_id']=='ratios'
 
 def test_idempotency_and_no_answer_leak(client,lecture):
-    data=client.get('/api/v2/recordings/lecture').json()
+    data=client.get('/api/v1/recordings/lecture').json()
     assert 'correct_index' not in str(data)
     assert 'correct_answer' not in str(data)
     s=cmd(client,resume(client),'check','fractions')
@@ -70,24 +70,27 @@ def test_failed_reassessment_retry_and_skip(client,lecture):
 
 def test_isolation_and_preferences(client,lecture):
     with TestClient(app) as other:
-        other.get('/api/v2/me')
-        assert other.get('/api/v2/recordings/lecture').status_code==404
-        assert other.post('/api/v2/recordings/lecture/session',json={}).status_code==404
-        assert other.get('/api/v2/recordings/lecture/media').status_code==404
-        client.post('/api/v2/preferences',json={'voice':'Matthew','language':'English'})
-        assert other.get('/api/v2/me').json()['preferences']['voice']=='Joanna'
+        other.get('/api/v1/me')
+        assert other.get('/api/v1/recordings/lecture').status_code==404
+        assert other.post('/api/v1/recordings/lecture/session',json={}).status_code==404
+        assert other.get('/api/v1/recordings/lecture/media').status_code==404
+        client.post('/api/v1/preferences',json={'voice':'Matthew','language':'English'})
+        assert other.get('/api/v1/me').json()['preferences']['voice']=='Browser'
+        res = client.post('/api/v1/preferences',json={'voice':'Browser','language':'English'})
+        assert res.status_code == 200
+        assert client.get('/api/v1/me').json()['preferences']['voice']=='Browser'
 
 def test_source_no_fallback_and_disabled_routes(client,lecture):
-    assert client.post('/api/v2/recordings/lecture/source',json={'evidence_ids':['invented']}).json()['type']=='source_unavailable'
-    assert client.post('/api/v2/recordings/lecture/source',json={'evidence_ids':['s1']}).json()['segments'][0]['start']==0
+    assert client.post('/api/v1/recordings/lecture/source',json={'evidence_ids':['invented']}).json()['type']=='source_unavailable'
+    assert client.post('/api/v1/recordings/lecture/source',json={'evidence_ids':['s1']}).json()['segments'][0]['start']==0
     for path in ['/api/whiteboard/sessions','/api/session/preferences','/storage/sessions/test.json','/api/lectures']:
         assert client.get(path).status_code==404
 
 def test_stale_command_and_cross_origin(client,lecture):
     s=resume(client)
     cmd(client,s,'next')
-    assert client.post('/api/v2/recordings/lecture/command',json={'action':'next','revision':s['revision']}).status_code==409
-    assert client.post('/api/v2/invite',json={'code':'test-invitation'},headers={'origin':'https://evil.example'}).status_code==403
+    assert client.post('/api/v1/recordings/lecture/command',json={'action':'next','revision':s['revision']}).status_code==409
+    assert client.post('/api/v1/invite',json={'code':'test-invitation'},headers={'origin':'https://evil.example'}).status_code==403
 
 def test_five_concurrent_public_learners(client,lecture):
     from concurrent.futures import ThreadPoolExecutor
@@ -98,7 +101,7 @@ def test_five_concurrent_public_learners(client,lecture):
         db.commit()
     def journey(index):
         with TestClient(app,client=(f'learner-{index}',1234)) as c:
-            c.get('/api/v2/me')
+            c.get('/api/v1/me')
             s=cmd(c,resume(c),'check','fractions')
             s=submit(c,s,1).json()['state']
             s=cmd(c,s,'teach','fractions')

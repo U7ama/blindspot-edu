@@ -1,0 +1,16 @@
+rule private_media {
+ Resources.Media.Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+ Resources.Media.Properties.PublicAccessBlockConfiguration.BlockPublicPolicy == true
+ Resources.Media.Properties.PublicAccessBlockConfiguration.IgnorePublicAcls == true
+ Resources.Media.Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets == true
+ Resources.Media.Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm == 'AES256'
+ Resources.Media.DeletionPolicy == 'Retain'
+}
+rule host_safety {
+ Resources.Host.Properties.MetadataOptions.HttpTokens == 'required'
+ Resources.Host.Properties.CreditSpecification.CPUCredits == 'standard'
+ Resources.Host.Properties.BlockDeviceMappings[*].Ebs.Encrypted == true
+ Resources.Host.Properties.InstanceType == 't3.medium'
+ Resources.WebSecurity.Properties.SecurityGroupIngress[*].FromPort IN [80, 443]
+ Resources.WebSecurity.Properties.SecurityGroupIngress[*].ToPort IN [80, 443]
+}

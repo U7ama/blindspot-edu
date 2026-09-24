@@ -6,8 +6,18 @@ export const metadata: Metadata = {
   description:
     "Your lecture recording, taught properly — with receipts. Turn passive audio into structured pedagogical phases, concept graphs, and verifiable source timestamps.",
   icons: {
-    icon: "/icon.svg",
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+    shortcut: ["/favicon.ico"],
   },
+  manifest: "/site.webmanifest",
 };
 
 export default function RootLayout({
@@ -16,9 +26,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en"  suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{ __html: 'try{var t=localStorage.getItem("blindspot-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.dataset.theme=d?"dark":"light";document.documentElement.dataset.themePref=t;document.documentElement.classList.toggle("dark",d)}catch(e){}' }} /></head>
       <body
-        className="min-h-screen bg-[#09090b] font-sans text-neutral-100 antialiased selection:bg-[#701a24]/40 selection:text-white"
+        className="min-h-screen font-sans antialiased"
         suppressHydrationWarning
       >
         {children}

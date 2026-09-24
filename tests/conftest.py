@@ -37,7 +37,7 @@ def clean_database():
 @pytest.fixture
 def client():
     with TestClient(app) as c:
-        c.get('/api/v2/me')
+        c.get('/api/v1/me')
         yield c
 
 @pytest.fixture

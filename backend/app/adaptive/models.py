@@ -71,3 +71,60 @@ class Asset(Base):
     recording_id = Column(String, nullable=False)
     storage_backend = Column(String, nullable=False)
     object_key = Column(String, nullable=False)
+
+
+class TranscriptCache(Base):
+    """Completed transcription checkpoint, independent of lesson generation."""
+    __tablename__ = 'adaptive_transcript_cache'
+    recording_id = Column(String, primary_key=True)
+    fingerprint = Column(String, nullable=False)
+    segments = Column(JSON, nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
+
+
+class LLMCache(Base):
+    """Cached structured LLM responses to prevent redundant generation."""
+    __tablename__ = 'adaptive_llm_cache'
+    key = Column(String, primary_key=True)
+    response = Column(Text, nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
+
+
+class ProcessingProgress(Base):
+    __tablename__ = 'adaptive_processing_progress'
+    recording_id = Column(String, primary_key=True)
+    stage = Column(String, nullable=False)
+    detail = Column(String, nullable=False)
+    current = Column(Float, nullable=True)
+    total = Column(Float, nullable=True)
+    unit = Column(String, nullable=True)
+    history = Column(JSON, default=list, nullable=False)
+    updated_at = Column(Float, default=time.time, nullable=False)
+
+
+class ImportSource(Base):
+    __tablename__ = 'adaptive_import_sources'
+    recording_id = Column(String, primary_key=True)
+    url = Column(Text, nullable=False)
+    kind = Column(String, nullable=False)
+
+
+class EmailNotice(Base):
+    __tablename__ = 'adaptive_email_notices'
+    recording_id = Column(String, primary_key=True)
+    email = Column(String, nullable=False)
+    status = Column(String, default='pending', nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    next_attempt = Column(Float, default=0, nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
+
+
+class LLMCacheOrigin(Base):
+    """Separate additive metadata; legacy cache keys cannot prove their generating model."""
+    __tablename__ = 'adaptive_llm_cache_origins'
+    key = Column(String, primary_key=True)
+    requested_model = Column(String, nullable=False)
+    source_model = Column(String, nullable=True)
+    source_provider = Column(String, nullable=True)
+    inherited_from = Column(String, nullable=True)
+    provenance = Column(String, nullable=False)

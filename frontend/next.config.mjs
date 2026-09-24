@@ -6,7 +6,7 @@ const nextConfig = {
   turbopack: { root: fileURLToPath(new URL(".", import.meta.url)) },
   reactStrictMode: true,
   // Match the API upload allowance; Next otherwise truncates proxied bodies at 10 MB.
-  experimental: { proxyClientMaxBodySize: "100mb" },
+  experimental: { proxyClientMaxBodySize: 262144000 },
   async rewrites() {
     return [
       {

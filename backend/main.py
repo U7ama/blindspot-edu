@@ -1,9 +1,11 @@
 """Public release mounts only the authorized adaptive API."""
 import os
+import ipaddress
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 from fastapi import FastAPI, Request
@@ -24,7 +26,7 @@ async def lifespan(app):
     yield
 
 app = FastAPI(title='Blindspot Edu', version='0.2.0', lifespan=lifespan)
-app.include_router(router, prefix='/api/v2')
+app.include_router(router, prefix='/api/v1')
 
 @app.exception_handler(AllowanceExceeded)
 async def allowance(request, exc):
@@ -42,7 +44,7 @@ async def invalid_generation(request, exc):
 
 @app.get('/health')
 def health():
-    return {'status': 'ok', 'release': 'adaptive-v2'}
+    return {'status': 'ok', 'release': 'adaptive-v1'}
 
 class TooLarge(Exception):
     pass
@@ -59,7 +61,30 @@ class BoundaryMiddleware:
         method = scope['method']
         origin = headers.get(b'origin', b'').decode()
         expected = os.getenv('APP_ORIGIN', 'http://localhost:3000')
-        if method not in ('GET', 'HEAD', 'OPTIONS') and origin and origin != expected:
+        allowed_origins = {expected}
+        if os.getenv('ALLOWED_ORIGINS'):
+            allowed_origins.update(o.strip() for o in os.getenv('ALLOWED_ORIGINS').split(',') if o.strip())
+        if os.getenv('APP_ENV') != 'production':
+            allowed_origins.update({
+                'http://localhost:3000',
+                'http://localhost:3100',
+                'http://127.0.0.1:3000',
+                'http://127.0.0.1:3100',
+            })
+        origin_allowed = not origin or origin in allowed_origins
+        if not origin_allowed and os.getenv('APP_ENV') != 'production':
+            try:
+                parsed = urlparse(origin)
+                host = parsed.hostname
+                if host in ('localhost', '127.0.0.1'):
+                    origin_allowed = True
+                elif host:
+                    ip = ipaddress.ip_address(host)
+                    if ip.is_private or ip.is_loopback:
+                        origin_allowed = True
+            except (ValueError, AttributeError):
+                pass
+        if method not in ('GET', 'HEAD', 'OPTIONS') and not origin_allowed:
             return await JSONResponse({'detail': 'Cross-origin request rejected'}, status_code=403)(scope, receive, send)
         ip = scope.get('client', ('unknown',))[0]
         now = time.monotonic()
@@ -71,7 +96,7 @@ class BoundaryMiddleware:
         queue.append(now)
         if len(self.requests) > 10000:
             self.requests = defaultdict(deque, {k: v for k, v in self.requests.items() if v and v[-1] >= now - 60})
-        uploading = scope['path'] == '/api/v2/recordings' and method == 'POST'
+        uploading = scope['path'] == '/api/v1/recordings' and method == 'POST'
         maximum = int(os.getenv('MAX_UPLOAD_BYTES', '104857600')) if uploading else 32768
         try:
             declared = int(headers.get(b'content-length', b'0'))

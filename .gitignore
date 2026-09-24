@@ -15,6 +15,7 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv
 venv/
 env/
 ENV/
@@ -35,6 +36,8 @@ backend/storage/
 backend/storage_data/
 storage_data/
 backend/data/
+backups/
+*.tar.gz
 *.db
 *.sqlite
 *.sqlite3
@@ -141,3 +144,7 @@ backend/private_data/
 *.pre-v2-*.db
 *.db-wal
 *.db-shm
+
+# Local submission drafts, contact details, support cases, and AWS evidence.
+# Share selected redacted proof through the hackathon submission.
+docs/hackathon/

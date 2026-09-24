@@ -15,7 +15,7 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/blindspot
-MemoryMax=1800M
-CPUQuota=100%
+MemoryMax=3200M
+CPUQuota=200%
 [Install]
 WantedBy=multi-user.target

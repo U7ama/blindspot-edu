@@ -89,7 +89,7 @@ export const Navbar: React.FC = () => {
           </Link>
 
           <a
-            href="https://github.com"
+            href="https://github.com/U7ama/blindspot-edu"
             target="_blank"
             rel="noopener noreferrer"
             className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-neutral-400 hover:text-white transition-colors tracking-tight px-3 py-1.5 rounded-lg hover:bg-white/[0.04]"
@@ -179,7 +179,7 @@ export const Navbar: React.FC = () => {
 
               <div className="pt-2 border-t border-white/5 flex items-center justify-between">
                 <a
-                  href="https://github.com"
+                  href="https://github.com/U7ama/blindspot-edu"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white transition-colors p-2"

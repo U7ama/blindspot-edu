@@ -36,9 +36,7 @@ python3.12 -m venv .venv
 cd frontend
 npm ci
 npm run build
-cp -a public .next/standalone/public
-mkdir -p .next/standalone/.next
-cp -a .next/static .next/standalone/.next/static
+# npm run build already copies standalone assets through postbuild.
 ```
 
 Build frontend assets locally or during a maintenance interval if the small host cannot build while serving the app. The checked systemd files expect Node at `/usr/bin/node`; verify this path on the host.
@@ -47,7 +45,8 @@ Create `/etc/blindspot.env`, readable only by root and the blindspot group, usin
 
 ```dotenv
 APP_ENV=production
-APP_ORIGIN=https://YOUR_HOSTNAME
+APP_ORIGIN=https://blindspot-edu.online
+PUBLIC_APP_URL=https://blindspot-edu.online
 DATA_DIR=/var/lib/blindspot/private
 DATABASE_URL=sqlite:////var/lib/blindspot/blindspot.db
 AWS_REGION=us-east-1
@@ -62,7 +61,7 @@ AI_TOTAL_ALLOWANCE_USD=6
 AI_LEARNER_ALLOWANCE_USD=1
 ```
 
-Copy `deploy/systemd/*` to `/etc/systemd/system`. Configure Caddy from `deploy/Caddyfile`, replacing `{$APP_HOSTNAME}` with the approved hostname (or supply that variable to Caddy's service). Never copy the pilot invitation code into frontend environment variables.
+Copy `deploy/systemd/*` to `/etc/systemd/system`. Copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile`. It defaults to `blindspot-edu.online`; an optional `APP_HOSTNAME` override must be supplied to the Caddy service itself, not just the app environment. Never copy the pilot invitation code into frontend environment variables.
 
 Initialize the database and prefetch Whisper as the application user with the service environment loaded. Then enable/start `blindspot-api`, `blindspot-worker`, `blindspot-web`, `blindspot-backup.timer` and Caddy. Configure journald to cap retention at seven days and disk usage at 100 MB. The API uses a single worker because the deployment's durable state resides in SQLite; do not scale this template horizontally without redesigning coordination.
 
@@ -77,3 +76,36 @@ Run all release checks in `docs/RELEASE_PLAN.md`. Test TLS, signed media URLs, f
 Back up the database before replacing a release. Retain the prior application directory and environment configuration. Do not restore an old database over newly collected student records just to revert code. New tables are additive; old tables are preserved. On provider errors preserve the saved lesson; any change to the advertised AWS provider path requires an explicit updated deployment record.
 
 Review health, failed jobs, conservative inference reservations, disk space and account charges daily through judging. Do not interpret successful health checks as proof that tutoring works. Keep logs free of raw transcripts and student answers. Release budget alarms and public IP do not stop costs automatically. Reassess hosting after Oct 23; do not automatically shut down before judging completes.
+
+## Cloudflare domain: blindspot-edu.online
+
+Recommended initial path: Cloudflare **DNS-only** A record → stack Elastic IP → Caddy HTTPS → Next.js / FastAPI. No Cloudflare Worker, Pages deployment, Route 53 hosted zone or load balancer is required. Wrangler login alone neither changes DNS nor proves DNS-edit permission.
+
+1. Review the existing apex records before changing them. Record prior values for rollback; preserve MX/TXT email records. Do not create a duplicate/conflicting A, AAAA or CNAME record.
+2. After the AWS host is provisioned and the application installed, set the apex A record (`@`) to stack output `PublicIp`, DNS-only (grey cloud). Do not retain an apex AAAA pointing elsewhere. This template does not allocate IPv6.
+3. Keep public ports 80/443 reachable for certificate issuance and HTTPS. API 8000 and frontend 3000 stay on loopback. Use SSM for administration.
+4. Validate and reload Caddy: `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then `sudo systemctl reload caddy`. Caddy obtains a publicly trusted certificate. Check DNS/CAA restrictions if issuance fails.
+5. Use exactly `https://blindspot-edu.online` for APP_ORIGIN and PUBLIC_APP_URL. The optional www hostname is not configured; do not advertise it without adding DNS, TLS and an apex redirect.
+6. Verify `curl --fail https://blindspot-edu.online/health`, then use a logged-out browser to test the sample, cookie persistence, media seeking, an invited upload and completion. Health alone does not validate the learning flow.
+7. Capture AWS resource details, the matching DNS record and public URL for the evidence package. Never include credentials or signed media links.
+
+### Optional Cloudflare proxy
+
+Start DNS-only to preserve large uploads and simplify TLS troubleshooting. Cloudflare Free/Pro proxy limits are documented as 100 MB per request; the app's Caddy/Next upper ceiling is 250 MiB and the API's effective MAX_UPLOAD_BYTES may differ. The initial deployment should keep MAX_UPLOAD_BYTES=104857600 unless a different limit is explicitly selected and benchmarked. DNS-only avoids imposing a second edge upload limit.
+
+If orange-cloud proxying is later enabled:
+- Use **Full (strict)** with a valid origin certificate, never Flexible.
+- Reconcile the actual zone request limit with MAX_UPLOAD_BYTES and verify an upload near that boundary. For larger uploads, retain DNS-only or implement separately authorized direct-to-S3 uploads; raising Caddy's limit cannot raise Cloudflare's limit.
+- Bypass edge caching for `/api/*`, `/workspace*` and `/settings*`; never apply Cache Everything to personalized routes. API responses receive `private, no-store` from Caddy.
+- Verify certificate renewal and check that redirects/challenges do not block the API or certificate challenge path.
+- Do not trust client-supplied CF-Connecting-IP headers without a deliberately configured trusted-proxy boundary.
+
+Official references: [Cloudflare upload limits](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-413/), [Full (strict)](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/), [Caddy environment defaults](https://caddyserver.com/docs/caddyfile/concepts#environment-variables).
+
+## Provider and remaining deployment gates
+
+The Bedrock/Polly environment above is the intended AWS configuration, not a forced migration. To retain the working Model Studio provider, configure LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL and LLM_API_KEY privately from the validated current setup; do not upload the development .env wholesale or expose keys to the frontend. Validate the chosen provider before switching.
+
+Completion email remains disabled by default. The existing instance role does not grant SES sending. Before enabling SES, verify a sender in the intended region and add a least-privilege ses:SendEmail policy scoped to that identity, then test recipient restrictions and delivery. Do not claim email is operational before this is complete.
+
+The template provisions infrastructure only: installation, data/sample migration, model download, SSM connectivity, domain cutover, backup restore, actual regional cost/credit verification and the 4 GB host load test remain launch gates. Retained resources continue costing money after stack deletion. No live DNS or cloud changes were made by this configuration review.

@@ -56,7 +56,7 @@ export const CTASection: React.FC = () => {
             className="h-11 rounded-md border-white/10 bg-white/[0.03] hover:bg-white/[0.08] hover:text-white text-neutral-300 px-6 text-sm font-medium tracking-tight gap-2"
           >
             <a
-              href="https://github.com"
+              href="https://github.com/U7ama/blindspot-edu"
               target="_blank"
               rel="noopener noreferrer"
             >

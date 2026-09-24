@@ -1,7 +1,7 @@
-{$APP_HOSTNAME} {
+{$APP_HOSTNAME:blindspot-edu.online} {
     encode zstd gzip
     request_body {
-        max_size 100MB
+        max_size 262144000
     }
     header {
         Strict-Transport-Security "max-age=31536000"
@@ -9,6 +9,7 @@
         Referrer-Policy same-origin
     }
     handle /api/* {
+        header Cache-Control "private, no-store"
         reverse_proxy 127.0.0.1:8000
     }
     handle /health {

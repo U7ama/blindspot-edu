@@ -29,7 +29,7 @@ def init_db():
     missing = set(Base.metadata.tables) - set(inspect(engine).get_table_names())
     path = engine.url.database
     if missing and engine.dialect.name == 'sqlite' and path and path != ':memory:' and Path(path).exists() and Path(path).stat().st_size:
-        backup = Path(path).with_suffix(f'.pre-v2-{int(time.time())}.db')
+        backup = Path(path).with_suffix(f'.pre-migration-{int(time.time())}.db')
         with sqlite3.connect(path) as src, sqlite3.connect(backup) as dst:
             src.backup(dst)
     if missing and engine.dialect.name != 'sqlite' and os.getenv('MIGRATION_BACKUP_CONFIRMED') != 'true':
