@@ -11,7 +11,7 @@ flowchart TD
     W --> S
     W --> T[CPU Whisper]
     T --> P[Coverage and whole-lecture verification]
-    P --> M[Bedrock Converse]
+    P --> M[Alibaba Cloud Model Studio: Qwen 3.7 Flash]
     A --> M
     A --> V[Polly cached English narration]
     V --> S
@@ -22,3 +22,5 @@ flowchart TD
 A stored document contains exact transcript segment IDs. Phase evidence is checked against those excerpts. Supplementary teaching has its own label and never borrows a mention timestamp as proof of its claims. The browser never receives assessment keys before submission. Learning commands use revisions; repeated answer requests are idempotent.
 
 The existing legacy tables remain intact. New tables use the `adaptive_` prefix. SQLite is backed up before missing tables are created. Legacy content can be exported for review using the admin CLI and reprocessed from original media; it is not automatically made public or assigned invented provenance.
+
+The production reasoning calls currently use Alibaba Cloud Model Studio through an external API. The AWS-hosted application uses EC2, S3, Polly, Systems Manager, and CloudFormation. A Bedrock adapter exists but is not serving production traffic; any switch requires account access and the same lecture quality, evidence, latency, and cost checks.

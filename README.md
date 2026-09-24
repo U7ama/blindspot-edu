@@ -33,7 +33,7 @@ npm run dev
 
 Visit http://localhost:3000. Local startup needs no cloud credentials, but dynamic reasoning/narration requires the explicitly configured provider. Set a private `PILOT_INVITE_CODE` before uploading. Local media is private and served only through authorized routes. There is intentionally no automatically fabricated demo lecture.
 
-Choose `STORAGE_BACKEND=local|s3|r2` explicitly. Production uses S3 and an EC2 role. Set `LLM_PROVIDER=bedrock` with an account-verified `BEDROCK_MODEL_ID`; `openai` is an explicit rollback option. Set `TTS_PROVIDER=polly` for narration or `disabled` for text-only local testing. No provider switch occurs silently.
+Choose `STORAGE_BACKEND=local|s3|r2` explicitly. Production uses S3 and an EC2 role. The live deployment currently uses `LLM_PROVIDER=modelstudio` with `LLM_MODEL=qwen3.7-flash` for reasoning and `TTS_PROVIDER=polly` for narration. The Bedrock adapter is implemented but inactive; use an account-verified model ID and run the lecture-quality and cost checks before switching. No provider switch occurs silently.
 
 ## Prepare an honest sample
 

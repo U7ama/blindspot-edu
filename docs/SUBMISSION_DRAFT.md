@@ -22,7 +22,7 @@ Blindspot transcribes a recording, checks possible omissions against coverage ac
 
 ## Architecture and implementation
 
-Intended production architecture: EC2 running Next.js, FastAPI and one durable processing worker; S3 media; Bedrock reasoning; Polly narration; local CPU Whisper. Deployment and provider quality must be verified before this is described as live. The database tracks evidence IDs, learner progress, idempotent grading and generation allowances. Prototype WhatsApp and general-purpose whiteboard APIs are not part of the public release.
+Current production architecture: AWS EC2 runs Next.js, FastAPI, one durable processing worker and local CPU Whisper; private S3 stores media and Amazon Polly generates narration. Pedagogical reasoning currently uses Alibaba Cloud Model Studio (Qwen 3.7 Flash) through an external API. An Amazon Bedrock adapter is implemented but is not active. A Bedrock switch depends on usable account access and passing the same lesson-quality, evidence, latency and cost checks. The database tracks evidence IDs, learner progress, idempotent grading and generation allowances. Prototype WhatsApp and general-purpose whiteboard APIs are not part of the public release.
 
 ## Evidence to attach
 
