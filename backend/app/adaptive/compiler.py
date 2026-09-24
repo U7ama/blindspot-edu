@@ -250,7 +250,7 @@ def compile_document(segments: list[Segment]) -> Document:
     for index, chunk in enumerate(chunks):
         report('concepts', 'Identifying concepts and explanations in the transcript.', index, len(chunks), 'sections')
         allowed = {s.id for s in chunk}
-        result = call('Extract concepts actually explained and prerequisites mentioned but not explained. Copy segment IDs exactly. Keep explanations concise. Do not invent missing topics. Mark teachable_evidence_ids only for coherent explanations, examples or instructional steps. Informal technical tutorials count; isolated developer task notes, incidental terms, status updates and sign-offs do not. Return empty items and teachable_evidence_ids if there is no educational content.', [s.model_dump() for s in chunk], CoverageBatch, validator=lambda batch: validate_coverage(batch, allowed))
+        result = call('Extract concepts actually explained and prerequisites mentioned but not explained (return at most 5-6 concepts per section, with 1-2 sentence explanations). Copy segment IDs exactly. Keep explanations concise. Do not invent missing topics. Mark teachable_evidence_ids only for coherent explanations, examples or instructional steps. Informal technical tutorials count; isolated developer task notes, incidental terms, status updates and sign-offs do not. Return empty items and teachable_evidence_ids if there is no educational content.', [s.model_dump() for s in chunk], CoverageBatch, validator=lambda batch: validate_coverage(batch, allowed))
         allowed = {s.id for s in chunk}
         if not set(result.teachable_evidence_ids) <= allowed:
             raise GenerationValidationError('Content evidence')
@@ -303,10 +303,17 @@ def compile_document(segments: list[Segment]) -> Document:
             if c.coverage not in ('under_explained', 'inferred_prerequisite'):
                 continue
             report('verification', 'Building and reviewing prerequisite explanations and reassessment questions.', phase_index, len(plan.phases), 'phases')
-            c.remediation = call('Create supplementary prerequisite teaching: a short explanation, worked example, simpler explanation, optional visual step list, and THREE genuinely different questions: diagnostic, reassessment (application), retry (another application). Each question needs a unique ID, exact concept_id and phase_id, matching purpose, options, correct_index and feedback. Do not attribute this new explanation to the lecturer.', {'concept': c.model_dump(), 'phase_id': phase.id, 'excerpts': cited}, Remediation)
+            remediation_prompt = 'Create supplementary prerequisite teaching: a short explanation, worked example, simpler explanation, optional visual step list, and THREE genuinely different questions: diagnostic, reassessment (application), retry (another application). Each question needs a unique ID, exact concept_id and phase_id, matching purpose, options, correct_index and feedback. Do not attribute this new explanation to the lecturer.'
+            c.remediation = call(remediation_prompt, {'concept': c.model_dump(), 'phase_id': phase.id, 'excerpts': cited}, Remediation)
             checked = call('Review this supplementary mini-lesson for conceptual correctness, clear worked example, unambiguous correct answers and distinct questions. This is supplementary teaching, not a claim it appeared in the lecture.', c.remediation.model_dump(), Verdict, 2048)
             if not checked.supported:
-                raise GenerationValidationError('Supplementary lesson review')
+                repair_prompt = 'Correct this supplementary prerequisite teaching based on the review feedback. Ensure clear conceptual explanation, accurate worked example, and 3 distinct, unambiguous questions with valid correct answers.'
+                c.remediation = call(repair_prompt, {'concept': c.model_dump(), 'remediation': c.remediation.model_dump(), 'feedback': checked.reason}, Remediation)
+                checked = call('Review this supplementary mini-lesson for conceptual correctness, clear worked example, unambiguous correct answers and distinct questions. This is supplementary teaching, not a claim it appeared in the lecture.', c.remediation.model_dump(), Verdict, 2048)
+                if not checked.supported:
+                    c.remediation = None
+                    c.coverage = 'uncertain'
+                    c.reason += ' Supplementary remediation could not be independently validated.'
     for c in candidates:
         if c.coverage in ('under_explained', 'inferred_prerequisite') and c.id not in attached:
             c.coverage = 'uncertain'
