@@ -1,5 +1,5 @@
 from backend.app.adaptive import compiler as c
-from backend.app.adaptive.contracts import Concept, Segment, Phase
+from backend.app.adaptive.contracts import Concept, Segment, Phase, Question
 
 def test_later_explanation_reconciled(monkeypatch):
     segments=[Segment(id='early',start=0,end=5,text='Use equivalent fractions.'),Segment(id='later',start=30,end=45,text='Equivalent fractions have equal values; multiply numerator and denominator by the same number.')]
@@ -159,3 +159,24 @@ def test_phase_repair_cannot_replace_evidence(monkeypatch):
     monkeypatch.setattr(c,'call',fake)
     with pytest.raises(ValueError,match='Preserve phase'):
         c.review_phase(phase,{'s':Segment(id='s',start=0,end=5,text='Explanation.')})
+
+
+def test_phase_repair_allows_rewritten_quiz_concept_id(monkeypatch):
+    quiz = Question(id='q1', concept_id='old-concept', phase_id='p', purpose='phase', question='Original question?', options=['A', 'B'], correct_index=0, explanation='Orig expl.')
+    phase = Phase(id='p', title='Topic', teaching_script='Unsupported assertion.', evidence_ids=['s'], quiz=quiz)
+    segment = Segment(id='s', start=0, end=5, text='The actual explanation.')
+    calls = []
+    def fake(prompt, data, shape, *args, **kwargs):
+        calls.append(shape)
+        if shape is c.Verdict:
+            return c.Verdict(supported=len(calls) == 3, reason='Unsupported')
+        repaired_quiz = Question(id='q1', concept_id='new-supported-concept', phase_id='p', purpose='phase', question='Supported question?', options=['A', 'B'], correct_index=1, explanation='New expl.')
+        repaired = phase.model_copy(update={'teaching_script': 'The actual explanation.', 'quiz': repaired_quiz})
+        kwargs['validator'](repaired)
+        return repaired
+    monkeypatch.setattr(c, 'call', fake)
+    result = c.review_phase(phase, {'s': segment})
+    assert result.quiz.concept_id == 'new-supported-concept'
+    assert result.quiz.phase_id == 'p'
+    assert result.quiz.purpose == 'phase'
+

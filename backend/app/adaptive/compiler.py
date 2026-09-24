@@ -61,7 +61,28 @@ class Plan(BaseModel):
 
 class Verdict(BaseModel):
     supported: bool
-    reason: str
+    reason: str = ''
+
+    @model_validator(mode='before')
+    @classmethod
+    def _coerce_fields(cls, data):
+        if isinstance(data, dict):
+            if 'supported' not in data:
+                for k in ('is_supported', 'verdict', 'is_valid', 'valid', 'supported_by_excerpts'):
+                    if k in data:
+                        data['supported'] = data[k]
+                        break
+            if isinstance(data.get('supported'), str):
+                val = data['supported'].lower().strip()
+                data['supported'] = val in ('true', 'yes', '1', 'supported', 'correct')
+            if 'reason' not in data:
+                for k in ('explanation', 'feedback', 'details', 'justification'):
+                    if k in data:
+                        data['reason'] = data[k]
+                        break
+                if 'reason' not in data:
+                    data['reason'] = ''
+        return data
 
 
 def windows(segments, limit=10000):
@@ -161,11 +182,12 @@ def validate_plan(plan, eligible_ids, segment_ids):
 
 def generate_plan(coverage, candidates, segments):
     eligible_ids = {c.id for c in candidates if c.coverage in ('under_explained', 'inferred_prerequisite')}
-    payload = {'coverage': coverage, 'concepts': [c.model_dump() for c in candidates], 'allowed_prerequisite_ids': sorted(eligible_ids), 'segments': [s.model_dump() for s in segments]}
+    eligible_concepts = [c.model_dump() for c in candidates if c.id in eligible_ids]
+    payload = {'coverage': coverage, 'concepts': eligible_concepts, 'allowed_prerequisite_ids': sorted(eligible_ids), 'segments': [s.model_dump() for s in segments]}
     prompt = (
-        'Reorganize the educational content into 3-6 coherent phases (at most 8); do not force an oversized syllabus. '
-        'Keep each phase teaching script focused and concise (1-3 clear paragraphs). '
-        'Use exact transcript evidence IDs (cite 3-10 key segment IDs per phase). '
+        'Reorganize the educational content into 3-4 coherent phases (at most 5); do not force an oversized syllabus. '
+        'Keep each phase teaching script focused and concise (1-2 clear paragraphs, strictly under 150 words per phase). '
+        'Use exact transcript evidence IDs (cite all relevant consecutive segment IDs that support the phase explanation, typically 5-20 segment IDs per phase). '
         'prerequisite_ids must be a subset of allowed_prerequisite_ids; use [] if no checkpoint applies. '
         'Never invent or rename prerequisite IDs, and attach each at most once. '
         'A lecture can be useful without any missing prerequisites. '
@@ -190,14 +212,33 @@ def review_phase(phase, segmap):
             raise GenerationValidationError('Lecture evidence review')
         original = phase
         def validate_repair(repaired):
+            if repaired.id.replace('_', '-') == original.id.replace('_', '-'):
+                repaired.id = original.id
+            if sorted(repaired.prerequisite_ids) == sorted(original.prerequisite_ids):
+                repaired.prerequisite_ids = original.prerequisite_ids
+            if sorted(repaired.evidence_ids) == sorted(original.evidence_ids):
+                repaired.evidence_ids = original.evidence_ids
+
             if repaired.id != original.id or repaired.prerequisite_ids != original.prerequisite_ids or repaired.evidence_ids != original.evidence_ids:
-                raise ValueError('Preserve phase id, prerequisite_ids and evidence_ids exactly. Only rewrite teaching and quiz content.')
+                raise ValueError(f'Preserve phase id, prerequisite_ids and evidence_ids exactly. Required: id="{original.id}", prerequisite_ids={json.dumps(original.prerequisite_ids)}, evidence_ids={json.dumps(original.evidence_ids)}. Only rewrite teaching and quiz content.')
             if (repaired.quiz is None) != (original.quiz is None):
                 raise ValueError('Preserve whether the phase contains a quiz.')
-            if repaired.quiz and any(getattr(repaired.quiz, field) != getattr(original.quiz, field) for field in ('id', 'concept_id', 'phase_id', 'purpose')):
-                raise ValueError('Preserve quiz identity and associations exactly.')
+            if repaired.quiz:
+                repaired.quiz.phase_id = original.id
+                repaired.quiz.purpose = 'phase'
+                if not repaired.quiz.id:
+                    repaired.quiz.id = original.quiz.id if original.quiz else f'q-{original.id}'
+                if not repaired.quiz.concept_id:
+                    repaired.quiz.concept_id = original.quiz.concept_id if original.quiz else original.id
             validate_plan(Plan(phases=[repaired]), set(original.prerequisite_ids), set(segmap))
-        phase = call('Correct this phase using only the cited excerpts and the review feedback. Remove unsupported claims or narrow them to what the excerpts actually explain. Rewrite the quiz if needed so its correct answer is supported. Do not add evidence or change any identity or prerequisite associations.', {'phase': original.model_dump(), 'excerpts': cited, 'review_feedback': verdict.reason}, Phase, 4096, validator=validate_repair)
+        prompt_repair = (
+            'Correct this phase using only the cited excerpts and the review feedback. '
+            f'You MUST keep id="{original.id}", prerequisite_ids={json.dumps(original.prerequisite_ids)}, and evidence_ids={json.dumps(original.evidence_ids)} exactly unchanged. '
+            'Remove unsupported claims or narrow them to what the excerpts actually explain. '
+            'Rewrite the quiz if needed so its correct answer is supported by the excerpts. '
+            'Do not add new evidence IDs, do not change the evidence list, and do not change any IDs or prerequisite associations.'
+        )
+        phase = call(prompt_repair, {'phase': original.model_dump(), 'excerpts': cited, 'review_feedback': verdict.reason}, Phase, 4096, validator=validate_repair)
 
 
 def compile_document(segments: list[Segment]) -> Document:

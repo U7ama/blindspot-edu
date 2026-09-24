@@ -24,7 +24,7 @@ def reserve(service, input_units, output_units=0, *, attempts=2):
         used = db.query(func.coalesce(func.sum(Usage.reserved_usd), 0)).scalar()
         own = db.query(func.coalesce(func.sum(Usage.reserved_usd), 0)).filter(Usage.actor == actor.get()).scalar()
         count = db.query(Usage).filter(Usage.actor == actor.get(), Usage.created_at > time.time() - 86400).count()
-        if used + amount > float(os.getenv('AI_TOTAL_ALLOWANCE_USD', '6')) or own + amount > float(os.getenv('AI_LEARNER_ALLOWANCE_USD', '1')) or count >= int(os.getenv('AI_DAILY_CALL_LIMIT', '100')):
+        if used + amount > float(os.getenv('AI_TOTAL_ALLOWANCE_USD', '100')) or own + amount > float(os.getenv('AI_LEARNER_ALLOWANCE_USD', '25')) or count >= int(os.getenv('AI_DAILY_CALL_LIMIT', '1000')):
             raise AllowanceExceeded('Dynamic generation allowance reached. Saved lessons and source playback remain available.')
         entry = Usage(id=uuid.uuid4().hex, actor=actor.get(), service=service, reserved_usd=amount, input_units=input_units, output_units=output_units)
         db.add(entry)
