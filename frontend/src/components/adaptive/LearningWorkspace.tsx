@@ -2,9 +2,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   RotateCcw,
   Volume2,
   VolumeX,
@@ -22,6 +24,8 @@ import {
   CornerDownRight,
   ChevronDown,
   Compass,
+  Play,
+  GraduationCap,
 } from "lucide-react";
 import LecturePlayer from "./LecturePlayer";
 import ProcessingCenter from "./ProcessingCenter";
@@ -29,6 +33,7 @@ import Shell, { button, secondary, panel } from "./Shell";
 import {
   request,
   Recording,
+  ProcessingProgress,
   Session,
   Evidence,
   timestamp,
@@ -134,10 +139,15 @@ export default function LearningWorkspace() {
   const params = useParams();
   const id = String(params.id);
   const [record, setRecord] = useState<Recording | null>(null);
+  const [showVerifiedReplay, setShowVerifiedReplay] = useState(false);
   const [state, setState] = useState<Session | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [source, setSource] = useState<Evidence[]>([]);
+  const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  const [scrolledPastOverview, setScrolledPastOverview] = useState(false);
+  const [hudMounted, setHudMounted] = useState(false);
+  const activeCardRef = useRef<HTMLElement>(null);
   const [sourceMessage, setSourceMessage] = useState("");
   const [query, setQuery] = useState("");
   const [reply, setReply] = useState<{
@@ -185,8 +195,18 @@ export default function LearningWorkspace() {
     try {
       const rec = await request<Recording>(`/recordings/${id}`);
       setRecord(rec);
-      if (rec.status === "ready")
+      if (rec.status === "ready") {
+        const key = `blindspot-review:${id}`;
+        try {
+          const requestedAt = Number(sessionStorage.getItem(key) || 0);
+          if (requestedAt && Date.now() - requestedAt < 10 * 60 * 1000) {
+            const progress = await request<ProcessingProgress>(`/recordings/${id}/progress`);
+            if (progress.history.some(event => event.stage === "reuse_verified")) setShowVerifiedReplay(true);
+            else sessionStorage.removeItem(key);
+          }
+        } catch { /* A blocked storage API or progress request must not hide a ready lesson. */ }
         setState(await request<Session>(`/recordings/${id}/session`, {}));
+      }
       setUser(await me());
     } catch (e) {
       setError((e as Error).message);
@@ -207,6 +227,7 @@ export default function LearningWorkspace() {
     setSpeakingTarget(null);
   }
   useEffect(() => {
+    setShowVerifiedReplay(false);
     void load();
     return () => {
       stopAudio();
@@ -225,10 +246,50 @@ export default function LearningWorkspace() {
   useEffect(() => {
     submitKey.current = null;
   }, [state?.active?.question_id, state?.revision]);
+  useEffect(() => setHudMounted(true), []);
   const doc = record?.document;
   const phase = doc?.phases.find((p) => p.id === state?.phase_id);
   const concept = doc?.concepts.find((c) => c.id === state?.active?.concept_id);
   const active = state?.active;
+  useEffect(() => {
+    if (!doc || !phase || !state) {
+      setScrolledPastOverview(false);
+      return;
+    }
+    const handleScroll = () => {
+      const guidedLesson = document.getElementById("guided-lesson");
+      setScrolledPastOverview(Boolean(guidedLesson && guidedLesson.getBoundingClientRect().top <= window.innerHeight - 96));
+    };
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleScroll);
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [id, doc, phase, state]);
+  const actionableConcepts = doc?.concepts.filter((c) => Boolean(c.remediation)) || [];
+  const crossRefConcepts = doc?.concepts.filter((c) => !c.remediation) || [];
+  const totalGaps = actionableConcepts.length;
+  const clearedGaps = actionableConcepts.filter(
+    (c) => state?.progress[c.id] === "passed_check"
+  ).length;
+  const gapsPercent = totalGaps > 0 ? Math.round((clearedGaps / totalGaps) * 100) : 100;
+  const allGapsCleared = totalGaps > 0 && clearedGaps === totalGaps;
+  const phasePrereqIds = phase?.prerequisite_ids || [];
+  const phasePrereqTotal = phasePrereqIds.length;
+  const phasePrereqCleared = phasePrereqIds.filter(
+    (cid) => state?.progress[cid] === "passed_check"
+  ).length;
+  const phasePrereqPending = phasePrereqTotal - phasePrereqCleared;
+  useEffect(() => {
+    if (active?.mode) {
+      const timer = setTimeout(() => {
+        activeCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [active?.mode, active?.question?.id, active?.concept_id]);
   async function act(action: string, target?: string) {
     if (!state) return;
     setBusy(true);
@@ -254,6 +315,7 @@ export default function LearningWorkspace() {
     if (!state || !active?.question) return;
     setBusy(true);
     setError("");
+    setSelectedOption(index);
     submitKey.current ??= crypto.randomUUID();
     try {
       const result = await request<{ state: Session }>(
@@ -266,8 +328,10 @@ export default function LearningWorkspace() {
         },
       );
       setState(result.state);
+      setSelectedOption(null);
     } catch (e) {
       setError((e as Error).message);
+      setSelectedOption(null);
       await load();
     } finally {
       setBusy(false);
@@ -286,7 +350,10 @@ export default function LearningWorkspace() {
       setSourceMessage(result.message || "");
       if (result.segments?.length && player.current) {
         player.current.currentTime = result.segments[0].start;
-        player.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        player.current.play?.().catch(() => {});
+        document.getElementById("lecture-player")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        document.getElementById("evidence-notebook")?.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     } catch (e) {
       setError((e as Error).message);
@@ -495,7 +562,7 @@ export default function LearningWorkspace() {
   }
   return (
     <Shell>
-      <main className="mx-auto max-w-7xl px-5 sm:px-8 pt-8 sm:pt-10 pb-20 sm:pb-28">
+      <main className="site-frame pt-8 sm:pt-10 pb-20 sm:pb-28">
         <Link className="text-sm text-[var(--muted-ink)] inline-flex items-center gap-1.5 hover:text-[var(--accent-ink)] transition-colors" href="/workspace">
           <ArrowLeft className="w-4 h-4" /> All lectures
         </Link>
@@ -576,13 +643,15 @@ export default function LearningWorkspace() {
                 <button
                   className={`${secondary} inline-flex items-center gap-1.5`}
                   disabled={busy}
-                  onClick={() => {
+                  onClick={async () => {
                     if (
                       window.confirm(
                         "Restart this lesson and reset its check progress?",
                       )
-                    )
-                      void act("restart");
+                    ) {
+                      await act("restart");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }
                   }}
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -590,7 +659,12 @@ export default function LearningWorkspace() {
                 </button>
               )}
             </div>
-            {["queued", "processing", "failed"].includes(record.status) ? (
+            {record.status === "ready" && showVerifiedReplay ? (
+              <ProcessingCenter record={record} user={user} replayVerified onOpenVerified={() => {
+                sessionStorage.removeItem(`blindspot-review:${id}`);
+                setShowVerifiedReplay(false);
+              }}/>
+            ) : ["queued", "processing", "failed"].includes(record.status) ? (
               <ProcessingCenter
                 record={record}
                 user={user}
@@ -622,7 +696,7 @@ export default function LearningWorkspace() {
                         Original Media Preserved
                       </span>
                     </div>
-                    <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--foreground)]">
+                    <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--ink)]">
                       Not enough educational content identified
                     </h2>
                     <p className="text-sm text-[var(--muted-ink)] max-w-2xl leading-relaxed">
@@ -642,13 +716,13 @@ export default function LearningWorkspace() {
                   {/* Left Column: Pedagogical Guarantees & Actions */}
                   <div className="space-y-6">
                     <div className={`${panel} space-y-4`}>
-                      <h3 className="text-base font-semibold text-[var(--foreground)] flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-[var(--ink)] flex items-center gap-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                         Why does Blindspot stop here?
                       </h3>
                       <div className="grid gap-4 sm:grid-cols-2 text-xs">
                         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/60 p-4 space-y-2">
-                          <strong className="text-[var(--foreground)] block text-sm">
+                          <strong className="text-[var(--ink)] block text-sm">
                             No Hallucinated Curriculum
                           </strong>
                           <p className="text-[var(--muted-ink)] leading-relaxed">
@@ -656,7 +730,7 @@ export default function LearningWorkspace() {
                           </p>
                         </div>
                         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/60 p-4 space-y-2">
-                          <strong className="text-[var(--foreground)] block text-sm">
+                          <strong className="text-[var(--ink)] block text-sm">
                             Full Media & Transcript Preserved
                           </strong>
                           <p className="text-[var(--muted-ink)] leading-relaxed">
@@ -667,7 +741,7 @@ export default function LearningWorkspace() {
                     </div>
 
                     <div className={`${panel} space-y-4`}>
-                      <h3 className="text-base font-semibold text-[var(--foreground)] flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-[var(--ink)] flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-[var(--accent-ink)]" />
                         Recommended Next Steps
                       </h3>
@@ -737,44 +811,371 @@ export default function LearningWorkspace() {
               </section>
             ) : doc && phase && state ? (
               <>
+              {/* Keep the dock outside the animated main element so it stays fixed while scrolling. */}
+              {hudMounted && createPortal(
+              <aside
+                aria-label="Progress HUD"
+                className={`progress-hud transition-all duration-300 ease-out ${
+                  scrolledPastOverview
+                    ? "translate-x-0 opacity-100"
+                    : "translate-x-14 opacity-0 pointer-events-none"
+                }`}
+              >
+                <div className="progress-hud-card flex flex-col items-center rounded-2xl border border-[var(--line)] bg-[var(--surface)]/95 backdrop-blur-md shadow-xl shadow-black/10 dark:shadow-black/50 p-2.5 transition-all">
+                  {/* Circular Progress Gauge */}
+                  <button
+                    type="button"
+                    className="relative flex flex-col items-center group cursor-pointer rounded-lg"
+                    aria-label={`Go to guided lesson, ${clearedGaps} of ${totalGaps} checks passed`}
+                    onClick={() => {
+                      document.getElementById("guided-lesson")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    <div className="relative w-10 h-10 flex items-center justify-center">
+                      <svg className="w-10 h-10 -rotate-90 transform" viewBox="0 0 40 40">
+                        <circle
+                          cx="20"
+                          cy="20"
+                          r="15"
+                          className="stroke-[var(--line)]"
+                          strokeWidth="3.5"
+                          fill="transparent"
+                        />
+                        <circle
+                          cx="20"
+                          cy="20"
+                          r="15"
+                          className={`${allGapsCleared ? "stroke-emerald-500" : "stroke-[var(--accent-ink)]"} transition-all duration-500`}
+                          strokeWidth="3.5"
+                          strokeDasharray={94.2}
+                          strokeDashoffset={94.2 - (94.2 * gapsPercent) / 100}
+                          strokeLinecap="round"
+                          fill="transparent"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {allGapsCleared ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                        ) : (
+                          <span className="text-[10px] font-mono font-bold text-[var(--ink)]">
+                            {gapsPercent}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-1 text-center">
+                      <span className="block text-[10px] font-mono font-bold text-[var(--ink)] leading-none">
+                        {clearedGaps}/{totalGaps}
+                      </span>
+                      <span className="block text-[8px] font-mono uppercase text-[var(--muted-ink)] tracking-wider mt-0.5">
+                        PASSED
+                      </span>
+                    </div>
+
+                    {/* Tooltip to the left */}
+                    <div className="absolute right-full mr-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl bg-[var(--surface)] border border-[var(--line)] shadow-xl text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                      <span className="font-semibold text-[var(--ink)]">Prerequisite Progress: </span>
+                      <span className="font-mono text-[var(--accent-ink)] font-bold">{clearedGaps} of {totalGaps} checks passed ({gapsPercent}%)</span>
+                    </div>
+                  </button>
+
+                  <div className="progress-hud-divider my-2 w-8 h-px bg-[var(--line)]" />
+
+                  {/* Vertical Gap Checkpoints */}
+                  <div className="progress-hud-checkpoints flex flex-col items-center gap-2">
+                    {actionableConcepts.map((c, idx) => {
+                      const status = state.progress[c.id] || "unchecked";
+                      const isPassed = status === "passed_check";
+                      const isNeedsHelp = status === "needs_help";
+                      return (
+                        <div key={c.id} className="relative group">
+                          <button
+                            onClick={() => void act(isNeedsHelp ? "teach" : "check", c.id)}
+                            disabled={busy}
+                            aria-label={`${c.name} - ${isPassed ? "Passed this check" : isNeedsHelp ? "Needs practice" : "Not checked"}`}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-mono font-bold transition-all hover:scale-105 cursor-pointer ${
+                              isPassed
+                                ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/40"
+                                : isNeedsHelp
+                                ? "bg-amber-500/20 text-amber-800 dark:text-amber-400 border border-amber-500/40 animate-pulse"
+                                : "bg-[var(--surface-soft)] text-rose-700 dark:text-rose-400 border border-rose-500/40"
+                            }`}
+                          >
+                            {isPassed ? (
+                              <Check className="w-4 h-4 stroke-[3]" />
+                            ) : isNeedsHelp ? (
+                              <AlertCircle className="w-4 h-4" />
+                            ) : (
+                              <span>{idx + 1}</span>
+                            )}
+                          </button>
+
+                          {/* Tooltip to the left */}
+                          <div className="absolute right-full mr-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl bg-[var(--surface)] border border-[var(--line)] shadow-xl text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                            <p className="font-semibold text-[var(--ink)]">{c.name}</p>
+                            <p className="text-[10px] text-[var(--muted-ink)] font-mono">
+                              {isPassed ? "Passed this check · Retest" : isNeedsHelp ? "Needs practice · Review example" : "Not checked · Start check"}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="progress-hud-divider my-2 w-8 h-px bg-[var(--line)]" />
+
+                  {/* Current Phase Badge */}
+                  <div className="relative group">
+                    <button
+                      onClick={() => {
+                        const target = document.getElementById("phase-prerequisites") || document.getElementById("current-phase-section");
+                        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      className="flex h-8 min-w-8 items-center justify-center rounded-lg bg-[var(--surface-soft)] hover:bg-[var(--surface)] border border-[var(--line)] text-[var(--ink)] font-mono text-xs font-semibold transition cursor-pointer"
+                      title={`Phase ${doc.phases.findIndex((p) => p.id === phase.id) + 1} of ${doc.phases.length}: ${phase.title}`}
+                    >
+                      P{doc.phases.findIndex((p) => p.id === phase.id) + 1}
+                    </button>
+                    <div className="absolute right-full mr-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl bg-[var(--surface)] border border-[var(--line)] shadow-xl text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                      <p className="font-semibold text-[var(--ink)]">
+                        Phase {doc.phases.findIndex((p) => p.id === phase.id) + 1}: {phase.title}
+                      </p>
+                      <p className="text-[10px] text-[var(--muted-ink)] font-mono">
+                        {phasePrereqPending === 0 ? "Phase checks passed" : `${phasePrereqPending} phase checks remaining`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Active Quiz/Check Pulse Button */}
+                  {active?.mode && (
+                    <div className="relative group mt-1.5">
+                      <button
+                        onClick={() => {
+                          activeCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                        }}
+                        className="h-8 w-8 rounded-xl bg-[var(--accent-ink)] text-white flex items-center justify-center shadow-md hover:scale-105 transition cursor-pointer"
+                        title="Jump to active check"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" />
+                      </button>
+                      <div className="absolute right-full mr-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl bg-[var(--surface)] border border-[var(--line)] shadow-xl text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                        <span className="font-semibold text-[var(--ink)]">Return to Active Check</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Back to top */}
+                  <button
+                    onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                    className="mt-1.5 h-8 w-8 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] hover:bg-[var(--surface)] text-[var(--muted-ink)] hover:text-[var(--ink)] flex items-center justify-center transition cursor-pointer"
+                    title="Back to top"
+                    aria-label="Back to top"
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </aside>, document.body)}
+
               <div className="workspace-watch">
                 <LecturePlayer src={`/api/v1/recordings/${id}/media`} title={record.title} segments={doc.segments} phases={doc.phases} mediaRef={player} onPlay={stopAudio}/>
                 <section className="workspace-overview">
                   <p className="eyebrow">YOUR LEARNING PATH</p>
                   <h2>Watch. Connect.<br/>Put it into practice.</h2>
                   <p>Explore the original recording above or follow the guided lesson below. Chapters seek to supporting excerpts; they don’t mark a lesson complete.</p>
-                  <div className="workspace-stats"><div><strong>{doc.phases.length}</strong><span>lesson phases</span></div><div><strong>{doc.concepts.filter(c=>c.remediation).length}</strong><span>prerequisite checks</span></div><div><strong>{Object.values(state.progress).filter(s=>s==="passed_check").length}</strong><span>checks passed</span></div></div>
+                  <div className="workspace-stats">
+                    <div><strong>{doc.phases.length}</strong><span>lesson phases</span></div>
+                    <div><strong>{totalGaps}</strong><span>prerequisite gaps</span></div>
+                    <div><strong className={allGapsCleared ? "text-emerald-500" : "text-amber-500"}>{clearedGaps}</strong><span>checks passed</span></div>
+                  </div>
+
+                  {/* Readiness Banner in Overview */}
+                  <div className="mb-5 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/70 p-3.5 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-[var(--ink)] flex items-center gap-1.5">
+                        <CheckCircle2 className={`w-3.5 h-3.5 ${allGapsCleared ? "text-emerald-500" : "text-amber-500"}`} />
+                        Prerequisite checks
+                      </span>
+                      <span className={`font-mono font-bold ${allGapsCleared ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                        {clearedGaps}/{totalGaps} passed ({gapsPercent}%)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-[var(--line)]/60 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-500 ${allGapsCleared ? "bg-emerald-500" : "bg-gradient-to-r from-amber-500 to-rose-600"}`}
+                        style={{ width: `${gapsPercent}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-[var(--muted-ink)]">
+                      {allGapsCleared
+                        ? "You passed each available prerequisite check for this lecture."
+                        : `${totalGaps - clearedGaps} prerequisite checks remain. Review them whenever you need support.`}
+                    </p>
+                  </div>
+
                   <div className="workspace-position"><span>{state.ended ? "Lesson complete" : `Current phase ${doc.phases.findIndex(p=>p.id===phase.id)+1} of ${doc.phases.length}`}</span><strong>{phase.title}</strong></div>
-                  <a className={button} href="#guided-lesson">Continue guided lesson <ArrowRight size={15}/></a>
+                  <button
+                    type="button"
+                    className={button}
+                    onClick={() => {
+                      document.getElementById("guided-lesson")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    Continue guided lesson <ArrowRight size={15}/>
+                  </button>
                 </section>
               </div>
+              <div className="workspace-guided-content">
               <div id="guided-lesson" className="lesson-section-title"><BookOpen size={18}/><h2>Your guided lesson</h2><span>Read, check and build on what you know</span></div>
+
+              {/* Prerequisite check progress */}
+              <div className="mb-6 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold uppercase tracking-wider bg-[var(--accent-ink)]/10 text-[var(--accent-ink)] border border-[var(--accent-ink)]/20">
+                        Prerequisite check progress
+                      </span>
+                      <span className="text-xs text-[var(--muted-ink)] font-mono">
+                        {allGapsCleared ? "All Checks Passed" : `${totalGaps - clearedGaps} Checks Remaining`}
+                      </span>
+                    </div>
+                    <h3 className="text-xl font-bold tracking-tight text-[var(--ink)]">
+                      {allGapsCleared
+                        ? "All available prerequisite checks passed"
+                        : `Prerequisite checks: ${clearedGaps} of ${totalGaps} passed (${gapsPercent}%)`}
+                    </h3>
+                    <p className="text-xs text-[var(--muted-ink)] max-w-2xl leading-relaxed">
+                      {allGapsCleared
+                        ? "You passed the available checks. You can revisit the examples and source excerpts at any time."
+                        : "Lecturers may assume background knowledge. Use these short checks and worked examples to find and practice any steps you need before continuing."}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {allGapsCleared ? (
+                      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-semibold text-sm">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                        <span>Checks passed</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-semibold text-sm">
+                        <AlertCircle className="w-5 h-5 text-amber-500" />
+                        <span>{totalGaps - clearedGaps} {totalGaps - clearedGaps === 1 ? "Check" : "Checks"} Remaining</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Full-width Progress Bar */}
+                <div className="mt-4 space-y-1.5">
+                  <div className="h-3 w-full rounded-full bg-[var(--surface-soft)] border border-[var(--line)] overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-500 ${allGapsCleared ? "bg-emerald-500" : "bg-gradient-to-r from-amber-500 to-rose-600"}`}
+                      style={{ width: `${gapsPercent}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Quick Interactive Prerequisite Gap Chips */}
+                <div className="mt-4 pt-4 border-t border-[var(--line)] flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-[var(--muted-ink)] mr-1">
+                    Prerequisite checks:
+                  </span>
+                  {actionableConcepts.map((c) => {
+                    const isPassed = state.progress[c.id] === "passed_check";
+                    const isNeedsHelp = state.progress[c.id] === "needs_help";
+                    return (
+                      <button
+                        key={c.id}
+                        disabled={busy}
+                        onClick={() => void act(isNeedsHelp ? "teach" : "check", c.id)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          isPassed
+                            ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25"
+                            : isNeedsHelp
+                            ? "bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25"
+                            : "bg-[var(--surface-soft)] border border-[var(--line)] text-[var(--ink)] hover:border-[var(--accent-ink)]"
+                        }`}
+                        title={isPassed ? "Re-test knowledge" : isNeedsHelp ? "Review worked example" : "Check my knowledge"}
+                      >
+                        {isPassed ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        ) : isNeedsHelp ? (
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                        ) : (
+                          <HelpCircle className="w-3.5 h-3.5 text-[var(--accent-ink)]" />
+                        )}
+                        <span>{c.name}</span>
+                        <span className="text-[10px] font-mono opacity-80">
+                          {isPassed ? "· Passed" : isNeedsHelp ? "· Needs practice" : "· Check knowledge"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="lesson-layout">
                 <aside className="lesson-roadmap space-y-3">
                   <p className="mb-4 text-xs font-mono uppercase text-[var(--muted-ink)]">
                     Lesson roadmap
                   </p>
-                  {doc.phases.map((p, i) => (
-                    <button
-                      key={p.id}
-                      disabled={busy}
-                      aria-current={p.id === phase.id ? "step" : undefined}
-                      onClick={() => void act("go_to_phase", p.id)}
-                      className={`block w-full rounded-xl border p-4 text-left text-sm ${p.id === phase.id ? "border-rose-800 bg-[#701a24]/20" : "border-[var(--line)] text-[var(--muted-ink)] hover:bg-[var(--surface-soft)]"}`}
-                    >
-                      <span className="mr-2 font-mono text-[var(--muted-ink)]">
-                        {String(i + 1).padStart(2, "0")}
-                      </span>
-                      {p.title}
-                    </button>
-                  ))}
+                  {doc.phases.map((p, i) => {
+                    const pPrereqs = p.prerequisite_ids || [];
+                    const pCleared = pPrereqs.filter(cid => state.progress[cid] === "passed_check").length;
+                    const pPending = pPrereqs.length - pCleared;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        disabled={busy}
+                        aria-current={p.id === phase.id ? "step" : undefined}
+                        onClick={async () => {
+                          if (p.id !== phase.id) {
+                            await act("go_to_phase", p.id);
+                          }
+                          document.getElementById("current-phase-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }}
+                        className={`block w-full rounded-xl border p-3.5 text-left text-sm transition-all cursor-pointer ${
+                          p.id === phase.id
+                            ? "border-[var(--accent-ink)] bg-[var(--accent-ink)]/15 shadow-sm ring-1 ring-[var(--accent-ink)]/25"
+                            : "border-[var(--line)] bg-[var(--surface)] text-[var(--muted-ink)] hover:bg-[var(--surface-soft)] hover:border-[var(--accent-ink)]/40"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-1.5">
+                          <span className="font-mono text-xs text-[var(--muted-ink)] mt-0.5">
+                            {String(i + 1).padStart(2, "0")}
+                          </span>
+                          <span className={`flex-1 font-semibold text-xs leading-5 ${p.id === phase.id ? "text-[var(--accent-ink)]" : "text-[var(--ink)]"}`}>
+                            {p.title}
+                          </span>
+                        </div>
+                        {pPrereqs.length > 0 ? (
+                          <div className="mt-2 pl-5">
+                            {pPending === 0 ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Prereqs cleared
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/30">
+                                <AlertCircle className="w-3 h-3 text-amber-500" /> {pPending} {pPending === 1 ? "gap" : "gaps"} to clear
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-2 pl-5">
+                            <span className="text-[10px] text-[var(--muted-ink)]">No prerequisites</span>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                   <p className="pt-3 text-xs leading-5 text-[var(--muted-ink)]">
                     Explore any phase freely to review key concepts, inspect source evidence, and test your understanding at your own pace.
                   </p>
                 </aside>
                 <div className="space-y-5">
                   {state.ended ? (
-                    <section className={panel}>
+                    <section id="current-phase-section" className={`${panel} scroll-mt-24`}>
                       <p className="text-xs uppercase tracking-widest text-[var(--accent-ink)]">
                         Lesson complete
                       </p>
@@ -787,13 +1188,55 @@ export default function LearningWorkspace() {
                       </p>
                     </section>
                   ) : (
-                    <section className={panel}>
-                      <span className="text-xs font-mono text-[var(--success)]">
-                        Lecture explanation
-                      </span>
+                    <section id="current-phase-section" className={`${panel} scroll-mt-24`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-mono text-[var(--success)]">
+                          Lecture explanation
+                        </span>
+                        {phasePrereqTotal > 0 && (
+                          phasePrereqPending === 0 ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                              All phase prerequisites cleared
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 rounded-full">
+                              <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                              {phasePrereqPending} {phasePrereqPending === 1 ? "prerequisite gap" : "prerequisite gaps"} unverified
+                            </span>
+                          )
+                        )}
+                      </div>
                       <h2 className="mt-3 text-2xl font-medium">
                         {phase.title}
                       </h2>
+
+                      {/* Prominent Callout Banner if this phase has unverified prerequisites */}
+                      {phasePrereqPending > 0 && (
+                        <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5">
+                            <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                            <div>
+                              <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
+                                Foundational Prerequisite Alert ({phasePrereqPending} unverified)
+                              </p>
+                              <p className="text-xs text-[var(--ink)] mt-0.5">
+                                This phase may need background knowledge that the recording does not explain. Use the checks and examples below if you need them.
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              document.getElementById("phase-prerequisites")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }}
+                            className="text-xs font-semibold text-amber-600 dark:text-amber-400 underline hover:no-underline inline-flex items-center gap-1 cursor-pointer bg-transparent border-0 p-0"
+                          >
+                            Go to checkpoints <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
                       <p className="mt-5 whitespace-pre-wrap leading-8 text-[var(--ink-soft)]">
                         <ReadAlongText
                           text={phase.teaching_script}
@@ -835,89 +1278,162 @@ export default function LearningWorkspace() {
                     </section>
                   )}
                   {!state.ended && phase.prerequisite_ids.length > 0 && (
-                    <section className={panel}>
-                      <h3 className="font-medium">Before you continue</h3>
-                      <p className="mt-2 text-sm text-[var(--muted-ink)]">
-                        An assumed prerequisite may already be familiar. Check
-                        it or choose to review.
-                      </p>
-                      <div className="mt-4 space-y-4">
+                    <section id="phase-prerequisites" className={`${panel} border-amber-500/30 scroll-mt-24`}>
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-4">
+                        <div>
+                          <h3 className="text-lg font-semibold text-[var(--ink)] flex items-center gap-2">
+                            <HelpCircle className="w-5 h-5 text-[var(--accent-ink)]" />
+                            Before You Continue: Prerequisite Checkpoints
+                          </h3>
+                          <p className="mt-1 text-xs text-[var(--muted-ink)] max-w-xl">
+                            The instructor assumes you know these concepts to follow this phase. Test your knowledge or let Blindspot teach you with worked examples to clear any blind spot.
+                          </p>
+                        </div>
+                        <div>
+                          {phasePrereqPending === 0 ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                              All {phasePrereqTotal} Prerequisite Checks Passed
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-800 dark:text-amber-400 border border-amber-500/30">
+                              <AlertCircle className="w-4 h-4 text-amber-500" />
+                              {phasePrereqPending} of {phasePrereqTotal} Remaining
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-5 space-y-4">
                         {phase.prerequisite_ids.map((cid) => {
                           const c = doc.concepts.find((c) => c.id === cid);
                           if (!c) return null;
+                          const status = state.progress[cid] || "unchecked";
+                          const isPassed = status === "passed_check";
+                          const isNeedsHelp = status === "needs_help";
+
                           return (
                             <div
                               key={cid}
-                              className="rounded-xl border border-[var(--line)] p-4"
+                              className={`rounded-xl border p-5 transition-all ${
+                                isPassed
+                                  ? "border-emerald-500/40 bg-emerald-500/5"
+                                  : isNeedsHelp
+                                  ? "border-amber-500/50 bg-amber-500/10 ring-1 ring-amber-500/20"
+                                  : "border-[var(--line)] bg-[var(--surface-soft)]/50 hover:border-[var(--accent-ink)]/50"
+                              }`}
                             >
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <h4 className="font-medium">{c.name}</h4>
-                                <span className="text-xs text-[var(--accent-ink)]">
-                                  {
-                                    progressLabels[
-                                      state.progress[cid] || "unchecked"
-                                    ]
-                                  }
-                                </span>
+                                <div className="space-y-1">
+                                  <h4 className="font-semibold text-base text-[var(--ink)]">
+                                    {c.name}
+                                  </h4>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[var(--surface)] text-[var(--muted-ink)] border border-[var(--line)]">
+                                      {labels[c.coverage]}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div>
+                                  {isPassed ? (
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/40">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      Verified Mastered
+                                    </span>
+                                  ) : isNeedsHelp ? (
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-400 border border-amber-500/40">
+                                      <AlertCircle className="w-3.5 h-3.5" />
+                                      Needs Practice
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/30">
+                                      <HelpCircle className="w-3.5 h-3.5 text-rose-500" />
+                                      Action Required · Not Checked
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                              <p className="mt-2 text-xs text-[var(--muted-ink)]">
-                                {labels[c.coverage]}
+
+                              <p className="mt-3 text-xs leading-relaxed text-[var(--muted-ink)]">
+                                <strong>Why this matters:</strong> {c.reason}
                               </p>
-                              <p className="mt-2 text-sm leading-6 text-[var(--muted-ink)]">
-                                {c.reason}
-                              </p>
-                              <div className="mt-3 flex flex-wrap gap-2">
+
+                              <div className="mt-4 flex flex-wrap gap-2">
                                 {c.remediation && (
                                   <>
-                                    <button
-                                      className={`${button} inline-flex items-center gap-1.5`}
-                                      disabled={busy}
-                                      onClick={() =>
-                                        void act(
-                                          state.progress[cid] === "needs_help"
-                                            ? "teach"
-                                            : "check",
-                                          cid,
-                                        )
-                                      }
-                                    >
-                                      {state.progress[cid] === "needs_help" ? (
-                                        <>
-                                          <BookOpen className="w-4 h-4" />
-                                          Review prerequisite
-                                        </>
-                                      ) : (
-                                        <>
-                                          <HelpCircle className="w-4 h-4" />
-                                          Check my knowledge
-                                        </>
-                                      )}
-                                    </button>
-                                    <button
-                                      className={`${secondary} inline-flex items-center gap-1.5`}
-                                      disabled={busy}
-                                      onClick={() => void act("teach", cid)}
-                                    >
-                                      <Sparkles className="w-4 h-4" />
-                                      Teach me
-                                    </button>
-                                    <button
-                                      className={`${secondary} inline-flex items-center gap-1.5`}
-                                      disabled={busy}
-                                      onClick={() => void act("skip", cid)}
-                                    >
-                                      <SkipForward className="w-4 h-4" />
-                                      Continue without passing
-                                    </button>
+                                    {isPassed ? (
+                                      <>
+                                        <button
+                                          className={`${secondary} inline-flex items-center gap-1.5 text-xs`}
+                                          disabled={busy}
+                                          onClick={() => void act("check", cid)}
+                                        >
+                                          <RotateCcw className="w-3.5 h-3.5" />
+                                          Re-test knowledge
+                                        </button>
+                                        <button
+                                          className={`${secondary} inline-flex items-center gap-1.5 text-xs`}
+                                          disabled={busy}
+                                          onClick={() => void act("teach", cid)}
+                                        >
+                                          <Sparkles className="w-3.5 h-3.5" />
+                                          Review worked example
+                                        </button>
+                                      </>
+                                    ) : isNeedsHelp ? (
+                                      <>
+                                        <button
+                                          className={`${button} inline-flex items-center gap-1.5 text-xs`}
+                                          disabled={busy}
+                                          onClick={() => void act("teach", cid)}
+                                        >
+                                          <BookOpen className="w-3.5 h-3.5" />
+                                          Review worked example & practice
+                                        </button>
+                                        <button
+                                          className={`${secondary} inline-flex items-center gap-1.5 text-xs`}
+                                          disabled={busy}
+                                          onClick={() => void act("check", cid)}
+                                        >
+                                          <HelpCircle className="w-3.5 h-3.5" />
+                                          Try diagnostic check again
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <button
+                                          className={`${button} inline-flex items-center gap-1.5 text-xs`}
+                                          disabled={busy}
+                                          onClick={() => void act("check", cid)}
+                                        >
+                                          <HelpCircle className="w-3.5 h-3.5" />
+                                          Check my knowledge (Quick Quiz)
+                                        </button>
+                                        <button
+                                          className={`${secondary} inline-flex items-center gap-1.5 text-xs`}
+                                          disabled={busy}
+                                          onClick={() => void act("teach", cid)}
+                                        >
+                                          <Sparkles className="w-3.5 h-3.5" />
+                                          Teach me first (Worked Example)
+                                        </button>
+                                        <button
+                                          className={`${secondary} inline-flex items-center gap-1.5 text-xs text-[var(--muted-ink)]`}
+                                          disabled={busy}
+                                          onClick={() => void act("skip", cid)}
+                                        >
+                                          <SkipForward className="w-3.5 h-3.5" />
+                                          Skip check
+                                        </button>
+                                      </>
+                                    )}
                                   </>
                                 )}
                                 <button
-                                  className={`${secondary} inline-flex items-center gap-1.5`}
-                                  onClick={() =>
-                                    void showSource(c.evidence_ids)
-                                  }
+                                  className={`${secondary} inline-flex items-center gap-1.5 text-xs`}
+                                  onClick={() => void showSource(c.evidence_ids)}
                                 >
-                                  <FileText className="w-4 h-4" />
+                                  <FileText className="w-3.5 h-3.5" />
                                   Related excerpt
                                 </button>
                               </div>
@@ -930,14 +1446,28 @@ export default function LearningWorkspace() {
                   {active?.mode === "question" && active.question && (
                     <section
                       key={active.question.id}
-                      className={`${panel} border-rose-900`}
+                      ref={activeCardRef}
+                      className={`${panel} border-[var(--accent-ink)]/60 scroll-mt-24`}
                     >
-                      <p className="text-xs uppercase tracking-widest text-[var(--accent-ink)]">
-                        {active.question.purpose === "diagnostic"
-                          ? "Prerequisite check"
-                          : "Apply what you learned"}
-                      </p>
-                      <h3 className="mt-4 text-xl">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs uppercase tracking-widest text-[var(--accent-ink)] font-semibold flex items-center gap-1.5">
+                          {active.question.purpose === "diagnostic" ? (
+                            <>
+                              <HelpCircle className="w-4 h-4 text-[var(--accent-ink)]" />
+                              Prerequisite check
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-4 h-4 text-[var(--accent-ink)]" />
+                              Apply what you learned
+                            </>
+                          )}
+                        </p>
+                        <span className="text-xs text-[var(--muted-ink)] font-mono">
+                          Select one answer
+                        </span>
+                      </div>
+                      <h3 className="mt-4 text-xl font-medium leading-snug text-[var(--ink)]">
                         {active.question.question}
                       </h3>
                       <div className="mt-5 space-y-3">
@@ -946,19 +1476,36 @@ export default function LearningWorkspace() {
                             key={i}
                             disabled={busy}
                             onClick={() => void answer(i)}
-                            className="block w-full rounded-xl border border-[var(--line)] p-4 text-left text-sm hover:border-rose-600 disabled:opacity-50"
+                            className={`block w-full rounded-xl border p-4 text-left text-sm transition-all duration-150 cursor-pointer ${
+                              selectedOption === i
+                                ? "border-rose-600 bg-rose-500/15 ring-2 ring-rose-500/30 text-[var(--ink)]"
+                                : "border-[var(--line)] bg-[var(--surface)] hover:border-rose-500/60 hover:bg-[var(--surface-soft)] text-[var(--ink)]"
+                            } disabled:opacity-60`}
                           >
-                            <span className="mr-3 text-[var(--muted-ink)]">
-                              {String.fromCharCode(65 + i)}
-                            </span>
-                            {option}
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-mono font-semibold ${
+                                  selectedOption === i
+                                    ? "border-rose-600 bg-rose-600 text-white shadow-sm"
+                                    : "border-[var(--line)] bg-[var(--surface-soft)] text-[var(--muted-ink)]"
+                                }`}>
+                                  {String.fromCharCode(65 + i)}
+                                </span>
+                                <span className="leading-relaxed">{option}</span>
+                              </div>
+                              {busy && selectedOption === i && (
+                                <span className="text-xs font-mono text-[var(--accent-ink)] animate-pulse shrink-0">
+                                  Submitting…
+                                </span>
+                              )}
+                            </div>
                           </button>
                         ))}
                       </div>
                     </section>
                   )}
                   {active?.mode === "lesson" && concept?.remediation && (
-                    <section className={`${panel} border-rose-900`}>
+                    <section ref={activeCardRef} className={`${panel} border-[var(--accent-ink)]/50 scroll-mt-24`}>
                       <p className="text-xs text-[var(--warning)]">
                         Supplementary teaching · not an explanation from the
                         recording
@@ -1049,7 +1596,7 @@ export default function LearningWorkspace() {
                     </section>
                   )}
                   {active?.mode === "feedback" && (
-                    <section className={panel}>
+                    <section ref={activeCardRef} className={`${panel} scroll-mt-24`}>
                       <h3
                         className={`text-xl flex items-center gap-2 ${active.correct ? "text-[var(--success)]" : "text-[var(--warning)]"}`}
                       >
@@ -1082,7 +1629,11 @@ export default function LearningWorkspace() {
                         <button
                           className={`${secondary} inline-flex items-center gap-1.5`}
                           disabled={busy}
-                          onClick={() => void act("return")}
+                          onClick={async () => {
+                            await act("return");
+                            const target = document.getElementById("phase-prerequisites") || document.getElementById("current-phase-section") || document.getElementById("guided-lesson");
+                            target?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          }}
                         >
                           <ArrowLeft className="w-4 h-4" />
                           {active.correct
@@ -1092,7 +1643,7 @@ export default function LearningWorkspace() {
                       </div>
                     </section>
                   )}
-                  {!state.ended && (
+                  {!state.ended && !active?.mode && (
                     <div className="flex flex-wrap gap-3">
                       {phase.quiz && (
                         <button
@@ -1107,7 +1658,10 @@ export default function LearningWorkspace() {
                       <button
                         className={`${button} inline-flex items-center gap-1.5`}
                         disabled={busy}
-                        onClick={() => void act("next")}
+                        onClick={async () => {
+                          await act("next");
+                          document.getElementById("current-phase-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }}
                       >
                         {phase.id === doc.phases.at(-1)?.id ? (
                           <>
@@ -1181,7 +1735,7 @@ export default function LearningWorkspace() {
                   </section>
                 </div>
                 <aside className="space-y-5">
-                  <section className={`${panel} !p-4`}>
+                  <section id="evidence-notebook" className={`${panel} !p-4 scroll-mt-24`}>
                     <h3 className="text-sm font-medium">Evidence notebook</h3>
                     <p className="mt-3 text-xs leading-5 text-[var(--muted-ink)]">Choose “Inspect lecture evidence” to collect the supporting excerpts here. Select a timestamp to seek the player.</p>
                     {sourceMessage && (
@@ -1192,15 +1746,18 @@ export default function LearningWorkspace() {
                     {source.map((s) => (
                       <button
                         key={s.id}
-                        className="mt-4 block w-full rounded-lg border border-[var(--line)] p-3 text-left"
+                        type="button"
+                        className="mt-4 block w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] hover:bg-[var(--surface-soft)] p-3 text-left transition-colors cursor-pointer"
                         onClick={() => {
                           if (player.current) {
                             player.current.currentTime = s.start;
-                            player.current.scrollIntoView({behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"center"});
+                            player.current.play?.().catch(() => {});
+                            document.getElementById("lecture-player")?.scrollIntoView({ behavior: "smooth", block: "start" });
                           }
                         }}
                       >
-                        <span className="text-xs font-mono text-[var(--accent-ink)]">
+                        <span className="text-xs font-mono text-[var(--accent-ink)] flex items-center gap-1.5 font-semibold">
+                          <Play className="w-3 h-3 fill-current" />
                           {timestamp(s.start)}–{timestamp(s.end)}
                         </span>
                         <p className="mt-2 text-xs leading-6 text-[var(--ink-soft)]">
@@ -1209,57 +1766,172 @@ export default function LearningWorkspace() {
                       </button>
                     ))}
                   </section>
-                  <section className={`${panel} !p-4`}>
-                    <h3 className="text-sm font-medium">Concept connections</h3>
-                    {doc.concepts.length === 0 ? (
-                      <p className="mt-3 text-xs text-[var(--muted-ink)]">
-                        No gaps identified in this completed analysis.
+                  <section id="concept-map-panel" className={`${panel} !p-4 space-y-4 scroll-mt-24`}>
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold flex items-center gap-1.5 text-[var(--ink)]">
+                          <Sparkles className="w-4 h-4 text-[var(--accent-ink)]" />
+                          Concept Map & Knowledge Gaps
+                        </h3>
+                        <span className="text-[11px] font-mono font-medium text-[var(--muted-ink)]">
+                          {clearedGaps}/{totalGaps} cleared
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-xs text-[var(--muted-ink)] leading-relaxed">
+                        Clear actionable gaps below to eliminate blind spots. Items covered in the recording require no prerequisite check.
                       </p>
-                    ) : (
-                      doc.concepts.map((c) => (
-                        <div
-                          key={c.id}
-                          className="mt-4 border-t border-[var(--line)] pt-4"
-                        >
-                          <p className="text-sm">{c.name}</p>
-                          <p className="mt-1 text-xs text-[var(--muted-ink)]">
-                            {labels[c.coverage]}
-                          </p>
-                          <p className="mt-1 text-xs text-[var(--accent-ink)]">
-                            {
-                              progressLabels[
-                                state.progress[c.id] || "unchecked"
-                              ]
-                            }
-                          </p>
-                          {doc.phases
-                            .filter((p) => p.prerequisite_ids.includes(c.id))
-                            .map((p) => (
-                              <p
-                                key={p.id}
-                                className="mt-2 text-xs text-[var(--muted-ink)] inline-flex items-center gap-1"
-                              >
-                                <CornerDownRight className="w-3 h-3 text-[var(--accent-ink)]" />
-                                Before {p.title}
-                              </p>
-                            ))}
-                          {c.explanation_evidence_ids.length > 0 && (
-                            <button
-                              className="mt-2 text-xs text-[var(--success)] underline inline-flex items-center gap-1"
-                              onClick={() =>
-                                void showSource(c.explanation_evidence_ids)
-                              }
+                    </div>
+
+                    {/* Group 1: Actionable Prerequisite Gaps */}
+                    <div className="pt-2 border-t border-[var(--line)]">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--accent-ink)] font-semibold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        Prerequisite Checks ({clearedGaps}/{totalGaps} Passed)
+                      </span>
+                      <p className="mt-1 text-[11px] text-[var(--muted-ink)]">
+                        Assumed background concepts. Pass the checks or learn with worked examples.
+                      </p>
+
+                      <div className="mt-3 space-y-3">
+                        {actionableConcepts.map((c) => {
+                          const status = state.progress[c.id] || "unchecked";
+                          const isPassed = status === "passed_check";
+                          const isNeedsHelp = status === "needs_help";
+
+                          return (
+                            <div
+                              key={c.id}
+                              className={`rounded-xl border p-3 text-xs transition-all ${
+                                isPassed
+                                  ? "border-emerald-500/30 bg-emerald-500/5"
+                                  : isNeedsHelp
+                                  ? "border-amber-500/40 bg-amber-500/10"
+                                  : "border-[var(--line)] bg-[var(--surface-soft)]/40 hover:border-[var(--accent-ink)]/40"
+                              }`}
                             >
-                              <Volume2 className="w-3 h-3" />
-                              Hear where it is explained
-                            </button>
-                          )}
+                              <div className="flex items-start justify-between gap-1.5">
+                                <strong className="font-semibold text-sm text-[var(--ink)] leading-snug">
+                                  {c.name}
+                                </strong>
+                              </div>
+                              <div className="mt-1 flex items-center gap-2">
+                                <span className="text-[10px] font-mono text-[var(--muted-ink)]">
+                                  {labels[c.coverage]}
+                                </span>
+                              </div>
+                              <div className="mt-1.5">
+                                {isPassed ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Passed this check
+                                  </span>
+                                ) : isNeedsHelp ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                                    <AlertCircle className="w-3 h-3 text-amber-500" /> Needs Practice
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400 bg-rose-500/15 border border-rose-500/30 px-2 py-0.5 rounded-full">
+                                    <HelpCircle className="w-3 h-3 text-rose-500" /> Action Required · Not Checked
+                                  </span>
+                                )}
+                              </div>
+                              {doc.phases
+                                .filter((p) => p.prerequisite_ids.includes(c.id))
+                                .map((p) => (
+                                  <p
+                                    key={p.id}
+                                    className="mt-2 text-[11px] text-[var(--muted-ink)] flex items-center gap-1"
+                                  >
+                                    <CornerDownRight className="w-3 h-3 text-[var(--accent-ink)] shrink-0" />
+                                    <span>Required before: <strong>{p.title}</strong></span>
+                                  </p>
+                                ))}
+                              <div className="mt-2.5 flex items-center gap-1.5">
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void act(
+                                      isNeedsHelp ? "teach" : "check",
+                                      c.id,
+                                    )
+                                  }
+                                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-[var(--accent-ink)] text-white hover:opacity-90 disabled:opacity-50 transition inline-flex items-center gap-1"
+                                >
+                                  {isPassed ? (
+                                    <>
+                                      <RotateCcw className="w-3 h-3" /> Re-test
+                                    </>
+                                  ) : isNeedsHelp ? (
+                                    <>
+                                      <BookOpen className="w-3 h-3" /> Practice
+                                    </>
+                                  ) : (
+                                    <>
+                                      <CheckSquare className="w-3 h-3" /> Check gap
+                                    </>
+                                  )}
+                                </button>
+                                <button
+                                  disabled={busy}
+                                  onClick={() => void act("teach", c.id)}
+                                  className="px-2.5 py-1 text-xs font-medium rounded-lg border border-[var(--line)] text-[var(--ink)] hover:bg-[var(--surface-soft)] disabled:opacity-50 transition inline-flex items-center gap-1"
+                                >
+                                  <Sparkles className="w-3 h-3 text-[var(--accent-ink)]" />
+                                  Teach me
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Group 2: Lecture Cross-References (Covered in recording) */}
+                    {crossRefConcepts.length > 0 && (
+                      <div className="pt-3 border-t border-[var(--line)]">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-sky-700 dark:text-sky-400 font-semibold flex items-center gap-1">
+                          <BookOpen className="w-3 h-3" />
+                          Covered in Lecture (Cross-References)
+                        </span>
+                        <p className="mt-1 text-[11px] text-[var(--muted-ink)]">
+                          Concepts already taught by the instructor in this recording. No prerequisite check required.
+                        </p>
+
+                        <div className="mt-3 space-y-3">
+                          {crossRefConcepts.map((c) => (
+                            <div
+                              key={c.id}
+                              className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/30 p-3 text-xs"
+                            >
+                              <strong className="font-semibold text-sm text-[var(--ink)] block">
+                                {c.name}
+                              </strong>
+                              <div className="mt-1.5 flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-800 dark:text-sky-300 bg-sky-500/15 border border-sky-500/30 px-2 py-0.5 rounded-full">
+                                  <Check className="w-3 h-3" /> Covered in Lecture · No check required
+                                </span>
+                              </div>
+                              <p className="mt-1.5 text-[11px] text-[var(--muted-ink)] leading-relaxed">
+                                {c.reason}
+                              </p>
+                              {c.explanation_evidence_ids.length > 0 && (
+                                <button
+                                  className="mt-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium underline inline-flex items-center gap-1.5 hover:opacity-80"
+                                  onClick={() =>
+                                    void showSource(c.explanation_evidence_ids)
+                                  }
+                                >
+                                  <Volume2 className="w-3.5 h-3.5" />
+                                  Hear where instructor explains it
+                                </button>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      ))
+                      </div>
                     )}
                   </section>
                   <section className={`${panel} !p-4`}>
-                    <label className="text-sm font-medium text-[var(--foreground)] flex items-center gap-1.5" id="voice-label">
+                    <label className="text-sm font-medium text-[var(--ink)] flex items-center gap-1.5" id="voice-label">
                       <Volume2 className="w-3.5 h-3.5 text-[var(--accent-ink)]" />
                       Narration voice
                     </label>
@@ -1276,7 +1948,7 @@ export default function LearningWorkspace() {
                             : "border-[var(--line)] bg-[var(--surface)] hover:border-[var(--accent-ink)]/60 hover:bg-[var(--surface-soft)]/50"
                         }`}
                       >
-                        <span className="flex items-center gap-2 text-[var(--foreground)]">
+                        <span className="flex items-center gap-2 text-[var(--ink)]">
                           <span className="w-2 h-2 rounded-full bg-[var(--accent-ink)]"></span>
                           {user?.preferences?.voice === "Matthew"
                             ? "Matthew · English (Polly)"
@@ -1337,11 +2009,11 @@ export default function LearningWorkspace() {
                                 className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left text-xs transition-colors duration-150 cursor-pointer ${
                                   isSelected
                                     ? "bg-[var(--surface-soft)] font-semibold text-[var(--accent-ink)]"
-                                    : "text-[var(--foreground)] hover:bg-[var(--surface-soft)]/70"
+                                    : "text-[var(--ink)] hover:bg-[var(--surface-soft)]/70"
                                 }`}
                               >
                                 <div>
-                                  <div className="font-medium text-[var(--foreground)]">{v.label}</div>
+                                  <div className="font-medium text-[var(--ink)]">{v.label}</div>
                                   <div className="text-[10px] text-[var(--muted-ink)]">{v.desc}</div>
                                 </div>
                                 {isSelected && (
@@ -1358,6 +2030,7 @@ export default function LearningWorkspace() {
                     </p>
                   </section>
                 </aside>
+              </div>
               </div>
               </>
             ) : (

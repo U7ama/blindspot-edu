@@ -30,7 +30,7 @@ import JourneyPreview from "@/components/adaptive/JourneyPreview";
 export default function Home() {
   return (
     <Shell>
-      <main className="mx-auto max-w-7xl px-5 sm:px-8">
+      <main className="site-frame">
         {/* Hero Section */}
         <section className="hero-layout">
           <div className="hero-copy">

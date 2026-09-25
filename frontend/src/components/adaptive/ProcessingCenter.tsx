@@ -12,10 +12,34 @@ const stages = [
   {id:"planning", label:"Build your learning path", description:"Organize the material and prepare relevant questions.", icon:FileCheck2},
   {id:"verification", label:"Verify and save", description:"Review evidence, explanations and reassessments.", icon:CheckCheck},
 ];
-export default function ProcessingCenter({record, user, onRetry, retrying = false}: {record: Recording; user: Me | null; onRetry?: () => Promise<void>; retrying?: boolean}) {
+const replaySeconds = 20;
+const replayDescriptions: Record<string, string> = {
+  retrieving: "This exact recording was matched to an existing verified lecture.",
+  transcribing: "Its timestamped transcript was reused; speech recognition was not rerun.",
+  concepts: "Previously extracted concepts and source excerpts were reused.",
+  prerequisites: "Previously verified prerequisite classifications were reused.",
+  planning: "Existing lesson phases and questions were linked to this copy.",
+  verification: "Source references were validated before the saved lesson was made ready.",
+};
+const reuseStages = [
+  {id:"retrieving", label:"Compare recording", description:"Check the actual media bytes against accessible verified lectures.", icon:Download},
+  {id:"reuse_verified", label:"Reuse verified lesson", description:"Copy the existing transcript and learning plan; no transcription or AI generation runs.", icon:FileCheck2},
+  {id:"publishing", label:"Save your copy", description:"Validate source references and save this recording's lesson.", icon:CheckCheck},
+];
+export default function ProcessingCenter({record, user, onRetry, retrying = false, replayVerified = false, onOpenVerified}: {record: Recording; user: Me | null; onRetry?: () => Promise<void>; retrying?: boolean; replayVerified?: boolean; onOpenVerified?: () => void}) {
   const failed = record.status === "failed";
   const queued = record.status === "queued";
   const [progress, setProgress] = useState<ProcessingProgress | null>(null);
+  const [replayElapsed, setReplayElapsed] = useState(0);
+  useEffect(() => {
+    if (!replayVerified) return;
+    const started = Date.now();
+    const timer = setInterval(() => setReplayElapsed(Math.min(replaySeconds, (Date.now() - started) / 1000)), 100);
+    return () => clearInterval(timer);
+  }, [replayVerified]);
+  useEffect(() => {
+    if (replayVerified && replayElapsed >= replaySeconds) onOpenVerified?.();
+  }, [replayVerified, replayElapsed, onOpenVerified]);
   const [connection, setConnection] = useState("");
   const [now, setNow] = useState(Date.now()/1000);
   const [browser, setBrowser] = useState(false);
@@ -68,9 +92,13 @@ export default function ProcessingCenter({record, user, onRetry, retrying = fals
   }
   const lastProgress = failed || queued ? progress?.last_progress : progress;
   const rawStage = lastProgress?.stage || "queued";
-  const normalized = ["downloading","validating"].includes(rawStage) ? "retrieving" : rawStage === "transcript_saved" ? "concepts" : rawStage === "publishing" ? "verification" : rawStage;
-  const active = stages.findIndex(s => s.id === normalized);
-  const elapsed = progress ? Math.max(0, Math.floor((failed ? progress.updated_at : now)-progress.created_at)) : 0;
+  const reused = !!progress?.history?.some(event => event.stage === "reuse_verified");
+  const visibleStages = replayVerified ? stages : reused ? reuseStages : stages;
+  const normalized = reused
+    ? rawStage === "transcript_saved" ? "reuse_verified" : rawStage
+    : ["downloading","validating"].includes(rawStage) ? "retrieving" : rawStage === "transcript_saved" ? "concepts" : rawStage === "publishing" ? "verification" : rawStage;
+  const active = replayVerified ? Math.min(stages.length - 1, Math.floor(replayElapsed / replaySeconds * stages.length)) : visibleStages.findIndex(s => s.id === normalized);
+  const elapsed = replayVerified ? Math.floor(replayElapsed) : progress ? Math.max(0, Math.floor((failed ? progress.updated_at : now)-progress.created_at)) : 0;
   const currentLabel = lastProgress?.unit === "seconds" ? timestamp(lastProgress.current || 0) : lastProgress?.unit === "bytes" ? ((lastProgress.current || 0)/1048576).toFixed(1)+" MB" : String(lastProgress?.current || 0);
   const totalLabel = lastProgress?.unit === "seconds" ? timestamp(lastProgress.total || 0) : lastProgress?.unit === "bytes" ? ((lastProgress.total || 0)/1048576).toFixed(1)+" MB" : String(lastProgress?.total || 0);
   return <div className={`processing-layout${failed ? " processing-layout-failed" : ""}`}>
@@ -78,37 +106,39 @@ export default function ProcessingCenter({record, user, onRetry, retrying = fals
       <div className="processing-heading">
         <div className="processing-orbit">{failed ? <AlertCircle size={28}/> : <BrainCircuit size={28}/>}</div>
         <div>
-          <p className="eyebrow">{failed ? "CONTINUE FROM SAVED CHECKPOINTS" : "YOUR RECORDING IS IN GOOD HANDS"}</p>
+          <p className="eyebrow">{replayVerified ? "VERIFIED LESSON REVIEW" : failed ? "CONTINUE FROM SAVED CHECKPOINTS" : "YOUR RECORDING IS IN GOOD HANDS"}</p>
           <h2>{failed ? "Processing needs attention" : "Building your learning experience"}</h2>
-          <p>{failed ? "Review what completed and what remains before retrying." : "Long recordings can take a while. Here’s what is actually happening."}</p>
+          <p>{replayVerified ? "This lecture was already uploaded. The next 20 seconds replay completed steps for demonstration; transcription and AI are not running again." : failed ? "Review what completed and what remains before retrying." : "Long recordings can take a while. Here’s what is actually happening."}</p>
         </div>
       </div>
       <div className="processing-live" role={failed ? "alert" : "status"}>
-        {failed ? <AlertCircle size={18}/> : <LoaderCircle size={18} className="animate-spin"/>}
+        {failed ? <AlertCircle size={18}/> : replayVerified ? <CheckCheck size={18}/> : <LoaderCircle size={18} className="animate-spin"/>}
         <div>
-          <strong>{failed ? record.error || "Processing stopped before your lesson was ready." : queued ? "Waiting for the processing worker." : progress?.detail || "Waiting for the processing worker."}</strong>
-          <p>{connection || (failed
-            ? active >= 0 ? `Stopped during: ${stages[active].label}.` : progress ? "The last completed step was not recorded; no steps are marked done." : "Loading the last recorded progress…"
+          <strong>{replayVerified ? `Reviewing completed step: ${visibleStages[active]?.label || "Verify and save"}` : failed ? record.error || "Processing stopped before your lesson was ready." : queued ? "Waiting for the processing worker." : progress?.detail || "Waiting for the processing worker."}</strong>
+          <p>{replayVerified ? "Your verified lesson is already ready to open." : connection || (failed
+            ? active >= 0 ? `Stopped during: ${visibleStages[active].label}.` : progress ? "The last completed step was not recorded; no steps are marked done." : "Loading the last recorded progress…"
             : queued && active >= 0 ? "Waiting to retry. Previous progress is shown below while saved work is restored."
             : progress && !progress.worker_active && record.status === "processing" ? "Waiting for the worker to reconnect. Saved checkpoints are preserved."
             : "This stage updates when real work completes. No estimated finish time yet.")}</p>
         </div>
       </div>
-      {lastProgress?.current != null && <div className="stage-progress"><div><span>{lastProgress.unit === "seconds" ? "Audio timestamp reached" : lastProgress.unit === "bytes" ? "Downloaded" : failed || queued ? "Completed before interruption" : "Completed in this stage"}</span><span>{currentLabel}{lastProgress.total ? " / "+totalLabel : ""}{lastProgress.unit && !["seconds","bytes"].includes(lastProgress.unit) ? " "+lastProgress.unit : ""}</span></div>{!!lastProgress.total && <progress max={lastProgress.total} value={Math.min(lastProgress.current, lastProgress.total)} aria-label="Current stage progress"/>}</div>}
-      {failed && active >= 0 && <p className="processing-summary">{active} of {stages.length} stages completed · {stages.length-active} remaining, including the interrupted stage</p>}
-      <ol className="processing-steps" aria-label="Processing stages">{stages.map((s,i) => {
+      {replayVerified && <div className="stage-progress"><div><span>Completed checks walkthrough</span><span>{Math.min(replaySeconds, Math.floor(replayElapsed))} / {replaySeconds} seconds</span></div><progress max={replaySeconds} value={replayElapsed} aria-label="Completed checks walkthrough"/></div>}
+      {!replayVerified && lastProgress?.current != null && <div className="stage-progress"><div><span>{lastProgress.unit === "seconds" ? "Audio timestamp reached" : lastProgress.unit === "bytes" ? "Downloaded" : failed || queued ? "Completed before interruption" : "Completed in this stage"}</span><span>{currentLabel}{lastProgress.total ? " / "+totalLabel : ""}{lastProgress.unit && !["seconds","bytes"].includes(lastProgress.unit) ? " "+lastProgress.unit : ""}</span></div>{!!lastProgress.total && <progress max={lastProgress.total} value={Math.min(lastProgress.current, lastProgress.total)} aria-label="Current stage progress"/>}</div>}
+      {failed && active >= 0 && <p className="processing-summary">{active} of {visibleStages.length} stages completed · {visibleStages.length-active} remaining, including the interrupted stage</p>}
+      <ol className="processing-steps" aria-label="Processing stages">{visibleStages.map((s,i) => {
         const Icon=s.icon, done=i<active, current=i===active;
-        return <li key={s.id} data-state={done ? "done" : current ? failed ? "failed" : "active" : "pending"} aria-current={current ? "step" : undefined}><span>{done ? <Check size={18}/> : failed && current ? <AlertCircle size={18}/> : <Icon size={18}/>}</span><div><strong>{s.label}</strong><p>{s.description}</p></div><small>{done ? "Done" : current ? failed ? "Interrupted" : queued ? "Waiting to retry" : "Working" : failed ? active >= 0 ? "Remaining" : "Not confirmed" : "Next"}</small></li>;
+        return <li key={s.id} data-state={done ? "done" : current ? failed ? "failed" : "active" : "pending"} aria-current={current ? "step" : undefined}><span>{done ? <Check size={18}/> : failed && current ? <AlertCircle size={18}/> : <Icon size={18}/>}</span><div><strong>{s.label}</strong><p>{replayVerified ? replayDescriptions[s.id] : s.description}</p></div><small>{replayVerified ? done ? "Reviewed" : current ? "Reviewing" : "Next" : done ? "Done" : current ? failed ? "Interrupted" : queued ? "Waiting to retry" : "Working" : failed ? active >= 0 ? "Remaining" : "Not confirmed" : "Next"}</small></li>;
       })}</ol>
       <div className="processing-resume">
-        <strong>{failed ? "Retry from saved progress" : "Safe to retry if a step fails"}</strong>
-        <p>Retry resumes from saved checkpoints, reusing the saved transcript and completed analysis where available. An interrupted download or unfinished step may need to run again.</p>
+        <strong>{replayVerified ? "Your lesson is ready" : failed ? "Retry from saved progress" : "Safe to retry if a step fails"}</strong>
+        <p>{replayVerified ? "You can open the lesson now or finish reviewing the completed steps." : "Retry resumes from saved checkpoints, reusing the saved transcript and completed analysis where available. An interrupted download or unfinished step may need to run again."}</p>
+        {replayVerified && <button className="ui-button ui-primary" onClick={onOpenVerified}><CheckCheck size={16}/>Open lesson now</button>}
         {failed && onRetry && <button className="ui-button ui-primary" disabled={retrying} onClick={() => void onRetry()}><RotateCcw size={16}/>{retrying ? "Retrying…" : "Retry processing"}</button>}
       </div>
-      <div className="processing-footer"><Clock3 size={14}/><span>{timestamp(elapsed)} {failed ? "until the last update" : "since submission"}</span><span>Checkpoints survive refreshes</span></div>
-      {progress?.history?.length ? <details className="processing-log"><summary>View processing activity</summary><ol>{progress.history.map((event,i) => <li key={i}><time>{new Date(event.at*1000).toLocaleTimeString()}</time><span>{event.detail}</span></li>)}</ol></details> : null}
+      <div className="processing-footer"><Clock3 size={14}/><span>{replayVerified ? `${elapsed} seconds into the completed-checks review` : `${timestamp(elapsed)} ${failed ? "until the last update" : "since submission"}`}</span><span>{replayVerified ? "Lesson already ready" : "Checkpoints survive refreshes"}</span></div>
+      {progress?.history?.length ? <details className="processing-log"><summary>{replayVerified ? "View actual reuse activity" : "View processing activity"}</summary><ol>{progress.history.map((event,i) => <li key={i}><time>{new Date(event.at*1000).toLocaleTimeString()}</time><span>{event.detail}</span></li>)}</ol></details> : null}
     </section>
-    {!failed && <aside className="processing-alerts"><Bell size={23}/><h3>We’ll let you know</h3><p>Keep this app tab open. You can visit another page in Blindspot while processing continues.</p>
+    {!failed && <aside className="processing-alerts"><Bell size={23}/><h3>We’ll let you know</h3><p>{replayVerified ? "The lesson is already ready. Completion alerts may arrive before this review ends." : "Keep this app tab open. You can visit another page in Blindspot while processing continues."}</p>
       <button className="alert-toggle" aria-pressed={browser} onClick={() => void browserAlert()}><Bell size={17}/><span>Desktop notification</span><b>{browser ? "On" : "Off"}</b></button>
       <button className="alert-toggle" aria-pressed={voice} onClick={() => {
         if (!("speechSynthesis" in window)) {setAlertMessage("Spoken alerts are not supported by this browser.");return;}

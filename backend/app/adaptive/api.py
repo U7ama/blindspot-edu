@@ -15,7 +15,7 @@ from sqlalchemy import or_, text
 from backend.app.core.db import get_db
 from backend.app.services.storage import get_storage_adapter
 from backend.app.services.ai.llm import chat_completion
-from .models import Learner, Recording, LearningState, Attempt, Job, Asset, ProcessingProgress, ImportSource, EmailNotice, TranscriptCache
+from .models import Learner, Recording, MediaIdentity, LearningState, Attempt, Job, Asset, ProcessingProgress, ImportSource, EmailNotice, TranscriptCache
 from .contracts import Document
 from .session import command, answer, snapshot, public_document, TransitionError
 from .budget import actor, AllowanceExceeded
@@ -98,7 +98,18 @@ def preferences(body: Preferences, learner=Depends(identity), db=Depends(get_db)
 
 @router.get('/recordings')
 def recordings(learner=Depends(identity), db=Depends(get_db)):
-    return [summary(r) for r in db.query(Recording).filter(or_(Recording.public.is_(True), Recording.owner_id == learner.id)).order_by(Recording.created_at.desc())]
+    accessible = db.query(Recording).filter(or_(Recording.public.is_(True), Recording.owner_id == learner.id)).order_by(Recording.created_at.desc(), Recording.id.desc()).all()
+    identities = {row.recording_id: row.sha256 for row in db.query(MediaIdentity).filter(MediaIdentity.recording_id.in_([r.id for r in accessible])).all()}
+    seen = set()
+    visible = []
+    for rec in accessible:
+        digest = identities.get(rec.id)
+        if digest and digest in seen:
+            continue
+        if digest:
+            seen.add(digest)
+        visible.append(summary(rec))
+    return visible
 
 @router.post('/recordings', status_code=202)
 async def upload(request: Request, filename: str, learner=Depends(identity), db=Depends(get_db)):
@@ -111,12 +122,14 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
         raise HTTPException(429, 'Pilot upload allowance reached')
     maximum = int(os.getenv('MAX_UPLOAD_BYTES', '104857600'))
     size = 0
+    digest = hashlib.sha256()
     with tempfile.NamedTemporaryFile(suffix=suffix) as file:
         try:
             async for chunk in request.stream():
                 size += len(chunk)
                 if size > maximum:
                     raise HTTPException(413, 'Recording exceeds the upload size limit')
+                digest.update(chunk)
                 file.write(chunk)
         except ClientDisconnect as exc:
             raise HTTPException(400, 'Upload interrupted before completion. Please retry the recording.') from exc
@@ -134,6 +147,7 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
         raise HTTPException(429, 'Pilot upload allowance reached')
     rec = Recording(id=uuid.uuid4().hex, owner_id=learner.id, title=Path(filename).name, storage_backend=storage.backend, object_key=key, duration=duration)
     db.add(rec)
+    db.add(MediaIdentity(recording_id=rec.id, sha256=digest.hexdigest()))
     db.add(Job(id=uuid.uuid4().hex, recording_id=rec.id))
     try:
         db.commit()

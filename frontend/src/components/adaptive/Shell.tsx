@@ -35,7 +35,7 @@ export default function Shell({
         <i />
       </div>
       <header className={`app-header ${scrolled ? "scrolled shadow-md" : ""}`}>
-        <nav className={`mx-auto flex max-w-7xl items-center justify-between gap-2 sm:gap-4 px-3.5 sm:px-8 transition-[padding] duration-200 ${scrolled ? "py-2.5 sm:py-3" : "py-3 sm:py-4"}`}>
+        <nav className={`site-frame flex items-center justify-between gap-2 sm:gap-4 transition-[padding] duration-200 ${scrolled ? "py-2.5 sm:py-3" : "py-3 sm:py-4"}`}>
           <Link href="/" className="flex items-center gap-2 sm:gap-2.5 font-semibold tracking-tight group shrink-0">
             <div className="relative w-7 h-7 sm:w-8 sm:h-8 rounded-lg overflow-hidden border border-[var(--line)] shadow-sm group-hover:scale-105 transition-transform flex items-center justify-center bg-[var(--surface)]">
               {/* eslint-disable-next-line @next/next/no-img-element */}

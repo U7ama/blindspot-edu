@@ -70,7 +70,7 @@ export default function LecturePlayer({
     } catch { setError("Fullscreen is unavailable in this browser."); }
   }
 
-  return <section className="lecture-player" aria-label="Lecture media player">
+  return <section id="lecture-player" className="lecture-player scroll-mt-24" aria-label="Lecture media player">
     <div ref={frame} className="player-frame" tabIndex={0} aria-label="Player keyboard controls: Space to play, arrows to seek, M to mute" onKeyDown={e => {
       if (e.target !== e.currentTarget) return;
       if (e.key === " " || e.key.toLowerCase() === "k") {e.preventDefault();void togglePlay();}

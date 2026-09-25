@@ -24,6 +24,12 @@ class Recording(Base):
     document = Column(JSON, nullable=True)
     created_at = Column(Float, default=time.time, nullable=False)
 
+class MediaIdentity(Base):
+    """Trusted digest of stored media; used only to collapse exact library duplicates."""
+    __tablename__ = 'adaptive_media_identities'
+    recording_id = Column(String, primary_key=True)
+    sha256 = Column(String(64), nullable=False, index=True)
+
 class Job(Base):
     __tablename__ = 'adaptive_jobs'
     id = Column(String, primary_key=True)

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Upload, BookOpen, Clock, AlertCircle, Link2, Mic } from "lucide-react";
+import { ArrowRight, Upload, BookOpen, Clock, AlertCircle, Link2, Mic, Bell, Volume2 } from "lucide-react";
 import Shell, { button, secondary, panel } from "@/components/adaptive/Shell";
 import { watchRecording } from "@/components/adaptive/CompletionAlerts";
 import LectureRecorder from "@/components/adaptive/LectureRecorder";
@@ -17,6 +17,9 @@ export default function Library() {
   const [capturing, setCapturing] = useState(false);
   const [url, setUrl] = useState("");
   const [permission, setPermission] = useState(false);
+  const [notifyEmail, setNotifyEmail] = useState("");
+  const [notifyBrowser, setNotifyBrowser] = useState(false);
+  const [notifyVoice, setNotifyVoice] = useState(false);
   const [uploadBytes, setUploadBytes] = useState<{sent:number; total:number} | null>(null);
   const abortUpload = useRef<AbortController | null>(null);
   useEffect(() => () => abortUpload.current?.abort(), []);
@@ -49,12 +52,24 @@ export default function Library() {
     setBusy(true);
     setError("");
     try {
+      if (notifyEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notifyEmail.trim()))
+        throw new Error("Enter a valid email address before uploading, or leave the alert field blank.");
       if (user && file.size > user.limits.upload_bytes)
         throw new Error("Recording exceeds the upload size limit");
       abortUpload.current = new AbortController();
       setUploadBytes({sent:0,total:file.size});
       const record = await upload(file, (sent,total) => setUploadBytes({sent,total}), abortUpload.current.signal);
-      watchRecording({id:record.id,title:record.title,browser:false,voice:false});
+      try { sessionStorage.setItem(`blindspot-review:${record.id}`, String(Date.now())); } catch {}
+      watchRecording({id:record.id,title:record.title,browser:notifyBrowser,voice:notifyVoice});
+      if (notifyEmail.trim()) {
+        try {
+          await request(`/recordings/${record.id}/notification`, {email:notifyEmail.trim()});
+        } catch (e) {
+          void load();
+          setError(`Recording uploaded, but the email alert could not be saved: ${(e as Error).message}. Open your recording to continue.`);
+          return true;
+        }
+      }
       router.push(`/workspace/${record.id}`);
       return true;
     } catch (e) {
@@ -69,15 +84,27 @@ export default function Library() {
   async function ingestLink() {
     setBusy(true);setError("");
     try {
+      if (notifyEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notifyEmail.trim()))
+        throw new Error("Enter a valid email address before importing, or leave the alert field blank.");
       const record = await request<Recording>("/recordings/import", {url:url.trim(),permission_confirmed:permission});
-      watchRecording({id:record.id,title:record.title,browser:false,voice:false});
+      try { sessionStorage.setItem(`blindspot-review:${record.id}`, String(Date.now())); } catch {}
+      watchRecording({id:record.id,title:record.title,browser:notifyBrowser,voice:notifyVoice});
+      if (notifyEmail.trim()) {
+        try {
+          await request(`/recordings/${record.id}/notification`, {email:notifyEmail.trim()});
+        } catch (e) {
+          void load();
+          setError(`Recording imported, but the email alert could not be saved: ${(e as Error).message}. Open your recording to continue.`);
+          return;
+        }
+      }
       router.push(`/workspace/${record.id}`);
     } catch(e) {setError((e as Error).message);}
     finally {setBusy(false);}
   }
   return (
     <Shell>
-      <main className="mx-auto max-w-7xl px-5 sm:px-8 py-8 sm:py-10">
+      <main className="site-frame py-8 sm:py-10">
         <p className="text-xs font-mono uppercase tracking-widest text-[var(--accent-ink)]">
           Learning workspace
         </p>
@@ -182,6 +209,31 @@ export default function Library() {
                     <span>Record lecture</span>
                   </button>
                 </div>
+                <div className="space-y-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5" aria-label="Completion alerts">
+                  <p className="text-sm font-medium">Tell me when my lesson is ready</p>
+                  <label className="flex items-center gap-2 text-sm text-[var(--muted-ink)]">
+                    <input type="checkbox" checked={notifyBrowser} disabled={busy || capturing} onChange={async e => {
+                      if (!e.currentTarget.checked) { setNotifyBrowser(false); return; }
+                      if (!("Notification" in window) || !window.isSecureContext) { setError("Desktop notifications are unavailable in this browser."); return; }
+                      const permission = await Notification.requestPermission();
+                      if (permission === "granted") { setNotifyBrowser(true); setError(""); }
+                      else setError("Desktop notification permission was not granted.");
+                    }}/><Bell className="h-4 w-4"/> Desktop notification
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-[var(--muted-ink)]">
+                    <input type="checkbox" checked={notifyVoice} disabled={busy || capturing} onChange={e => {
+                      if (e.currentTarget.checked && !("speechSynthesis" in window)) { setError("Spoken alerts are unavailable in this browser."); return; }
+                      setNotifyVoice(e.currentTarget.checked);
+                    }}/><Volume2 className="h-4 w-4"/> Spoken alert while this app is open
+                  </label>
+                </div>
+                {user.email_notifications_enabled && <label className="block text-sm text-[var(--muted-ink)]">
+                  Email me when the lesson is ready (optional)
+                  <input type="email" maxLength={254} autoComplete="email" value={notifyEmail} disabled={busy || capturing}
+                    onChange={e => setNotifyEmail(e.target.value)} placeholder="you@example.com"
+                    className="mt-2 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3.5 py-2.5 text-sm text-[var(--ink)] placeholder:text-[var(--muted-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-ink)]/50"/>
+                  <span className="mt-1 block text-xs">Saved as a one-time alert as soon as your recording is accepted. The email does not grant access to a private lesson.</span>
+                </label>}
                 {mode==="file" ? <label className={`${button} w-full cursor-pointer inline-flex items-center justify-center gap-2`}>
                   <Upload className="w-4 h-4"/>{busy ? "Uploading…" : "Choose audio or video"}
                   <input aria-label="Upload a lecture recording" className="sr-only" type="file" accept=".wav,.mp3,.m4a,.mp4,.flac,.ogg,.aac,.webm" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)void ingest(f);e.target.value="";}}/>
@@ -196,7 +248,7 @@ export default function Library() {
                   <strong>{uploadBytes.sent < uploadBytes.total ? "Uploading recording" : "Upload sent · validating media"}</strong>
                   <progress aria-label="File upload progress" value={uploadBytes.sent} max={uploadBytes.total || 1}/>
                   <p>{(uploadBytes.sent/1048576).toFixed(1)} / {(uploadBytes.total/1048576).toFixed(1)} MB · {Math.min(100,Math.round(uploadBytes.sent/Math.max(1,uploadBytes.total)*100))}% transferred</p>
-                  <p>{uploadBytes.sent < uploadBytes.total ? "Keep this page open until the upload finishes." : "The server is checking the recording before queueing transcription."}</p>
+                  <p>{uploadBytes.sent < uploadBytes.total ? "Keep this page open until the upload finishes." : "The server is checking the recording before starting or reusing lesson analysis."}</p>
                   {uploadBytes.sent < uploadBytes.total && <button type="button" className="text-link" onClick={()=>abortUpload.current?.abort()}>Cancel upload</button>}
                 </div>}
               </div>

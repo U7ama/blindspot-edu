@@ -21,7 +21,7 @@ export const metadata = {
 export default function TermsPage() {
   return (
     <Shell>
-      <main className="mx-auto max-w-7xl px-5 sm:px-8 py-8 sm:py-10">
+      <main className="site-frame py-8 sm:py-10">
         {/* Navigation Breadcrumb */}
         <div className="mb-6">
           <Link

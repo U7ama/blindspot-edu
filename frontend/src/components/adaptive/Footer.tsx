@@ -28,7 +28,7 @@ export default function Footer() {
         aria-hidden="true"
       />
 
-      <div className="mx-auto max-w-7xl px-5 sm:px-8 py-14 sm:py-16 relative z-10">
+      <div className="site-frame py-14 sm:py-16 relative z-10">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-10 lg:gap-14 pb-12 border-b border-[var(--line)]">
 
           {/* Col 1: Brand & Pedagogical Mission (5 cols) */}

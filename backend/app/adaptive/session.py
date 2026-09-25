@@ -55,7 +55,12 @@ def command(state, doc, action, target=None):
         state.active = {'mode': 'question', 'question_id': phase.quiz.id, 'return_phase_id': phase.id, 'concept_id': phase.quiz.concept_id if phase.quiz.concept_id in phase.prerequisite_ids else None}
     elif action in ('check', 'teach', 'reassess', 'skip'):
         if target not in phase.prerequisite_ids:
-            raise TransitionError('Prerequisite does not belong to this phase')
+            parent = next((p for p in doc.phases if target in p.prerequisite_ids), None)
+            if parent:
+                state.phase_id = parent.id
+                phase = parent
+            else:
+                raise TransitionError('Prerequisite does not belong to this phase')
         concept = next(c for c in doc.concepts if c.id == target)
         if not concept.remediation:
             raise TransitionError('No verified prerequisite lesson is available')
@@ -70,12 +75,12 @@ def command(state, doc, action, target=None):
         elif action == 'reassess':
             prior = state.active or {}
             if prior.get('mode') != 'lesson' or prior.get('concept_id') != target:
-                raise TransitionError('Review the prerequisite lesson before reassessment')
-            q = concept.remediation.retry if prior.get('retry') else concept.remediation.reassessment
-            state.active = {'mode': 'question', 'question_id': q.id, 'concept_id': target, 'return_phase_id': phase.id}
+                q = concept.remediation.reassessment
+                state.active = {'mode': 'question', 'question_id': q.id, 'concept_id': target, 'return_phase_id': phase.id}
+            else:
+                q = concept.remediation.retry if prior.get('retry') else concept.remediation.reassessment
+                state.active = {'mode': 'question', 'question_id': q.id, 'concept_id': target, 'return_phase_id': phase.id}
         else:
-            if progress.get(target) == 'needs_help':
-                raise TransitionError('Review the prerequisite lesson before another check')
             state.active = {'mode': 'question', 'question_id': concept.remediation.diagnostic.id, 'concept_id': target, 'return_phase_id': phase.id}
         state.progress = progress
     elif action == 'return':

@@ -1,11 +1,12 @@
 """Single-worker lease queue. Kill/restart safely; output publication is atomic."""
 import logging
+import hashlib
 import threading
 import time
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from backend.app.core.db import SessionLocal, init_db
 from backend.app.services.storage import get_storage_adapter
-from .models import Job, Recording
+from .models import Job, Recording, MediaIdentity
 from .progress import reporter, report, update
 from .contracts import Document
 from .compiler import compile_document, InsufficientContent, GenerationValidationError
@@ -15,6 +16,70 @@ from .budget import actor, AllowanceExceeded
 from botocore.exceptions import ClientError, NoCredentialsError, PartialCredentialsError
 
 logger = logging.getLogger(__name__)
+
+
+def media_digest(backend, key):
+    """Hash actual bytes; names, durations and multipart ETags cannot prove identity."""
+    digest = hashlib.sha256()
+    with get_storage_adapter(backend).local_copy(key) as path:
+        with open(path, 'rb') as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                digest.update(chunk)
+    return digest.digest()
+
+
+def copy_document(document, recording_id):
+    """Give an identical recording its own stable transcript segment IDs."""
+    payload = document.model_dump()
+    ids = {segment['id']: f'{recording_id}:s{index}'
+           for index, segment in enumerate(payload['segments'])}
+    for segment in payload['segments']:
+        segment['id'] = ids[segment['id']]
+    for concept in payload['concepts']:
+        for field in ('evidence_ids', 'explanation_evidence_ids'):
+            concept[field] = [ids[item] for item in concept[field]]
+    for phase in payload['phases']:
+        phase['evidence_ids'] = [ids[item] for item in phase['evidence_ids']]
+    return Document.model_validate(payload)
+
+
+def identical_verified_lesson(recording_id, owner_id, backend, key, duration):
+    """Reuse only a byte-identical verified public or same-owner recording."""
+    with SessionLocal() as db:
+        candidates = [
+            (source.id, source.storage_backend, source.object_key, source.document)
+            for source in db.query(Recording).filter(
+                Recording.id != recording_id,
+                Recording.status == 'ready',
+                Recording.document.isnot(None),
+                Recording.duration.between(duration - 0.5, duration + 0.5),
+                or_(Recording.public.is_(True), Recording.owner_id == owner_id),
+            ).order_by(Recording.created_at.desc()).all()
+        ]
+    checked = []
+    for source_id, source_backend, source_key, raw_document in candidates:
+        if not isinstance(raw_document, dict) or raw_document.get('version') != 2 or raw_document.get('validation') != 'verified':
+            continue
+        try:
+            document = Document.model_validate(raw_document)
+        except ValueError:
+            continue
+        checked.append((source_id, source_backend, source_key, document))
+    uploaded_digest = media_digest(backend, key)
+    with SessionLocal() as db:
+        db.merge(MediaIdentity(recording_id=recording_id, sha256=uploaded_digest.hex()))
+        db.commit()
+    for source_id, source_backend, source_key, document in checked:
+        try:
+            source_digest = media_digest(source_backend, source_key)
+            with SessionLocal() as db:
+                db.merge(MediaIdentity(recording_id=source_id, sha256=source_digest.hex()))
+                db.commit()
+            if source_digest == uploaded_digest:
+                return source_id, copy_document(document, recording_id)
+        except (OSError, ValueError, ClientError) as exc:
+            logger.warning('Could not compare cached media %s (%s)', source_id, type(exc).__name__)
+    return None
 
 def failure_message(exc, stage):
     # Never persist raw provider/Pydantic messages: they may contain input text or secrets.
@@ -104,7 +169,37 @@ def run_once():
             from .imports import import_recording
             backend, key = import_recording(rid, jid, attempt)
         cache_key = fingerprint(backend, key)
-        segments = load_transcript(rid, cache_key)
+
+        with SessionLocal() as db:
+            current = db.get(Recording, rid)
+            duration = current.duration
+        saved_segments = load_transcript(rid, cache_key)
+        if saved_segments is None:
+            report('retrieving', 'Checking whether this exact recording already has a verified lesson.')
+        cached = identical_verified_lesson(rid, owner, backend, key, duration) if saved_segments is None else None
+        if cached:
+            source_id, document = cached
+            logger.info('Reusing byte-identical verified lesson %s for recording %s', source_id, rid)
+            report('reuse_verified', 'Identical verified recording found; reusing its lesson and transcript.')
+            stage = 'Transcript checkpoint'
+            if not save_transcript(rid, cache_key, document.segments, jid, attempt):
+                return True
+            report('transcript_saved', 'Saved the reused transcript; no speech recognition was run.')
+            stage = 'Lesson publication'
+            report('publishing', 'Validating references and saving your copy of the verified lesson.')
+            with SessionLocal() as db:
+                db.execute(text('BEGIN IMMEDIATE'))
+                rec, job = db.get(Recording, rid), db.get(Job, jid)
+                if job.status != 'running' or job.attempts != attempt:
+                    return True
+                rec.document, rec.status, rec.error = document.model_dump(), 'ready', None
+                job.status = 'done'
+                db.commit()
+            from .notifications import deliver_one
+            deliver_one()
+            return True
+
+        segments = saved_segments
         if segments is None:
             with get_storage_adapter(backend).local_copy(key) as path:
                 stage = 'Transcription'
