@@ -28,6 +28,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 import LecturePlayer from "./LecturePlayer";
+import { createReadAlong } from "@/lib/read-along";
 import ProcessingCenter from "./ProcessingCenter";
 import Shell, { button, secondary, panel } from "./Shell";
 import {
@@ -125,16 +126,6 @@ function ReadAlongText({
   );
 }
 
-function getWordTokens(text: string) {
-  const regex = /[\p{L}\p{N}'’_-]+/gu;
-  const tokens: Array<{ charIndex: number; charLength: number; word: string }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = regex.exec(text)) !== null) {
-    tokens.push({ charIndex: m.index, charLength: m[0].length, word: m[0] });
-  }
-  return tokens;
-}
-
 export default function LearningWorkspace() {
   const params = useParams();
   const id = String(params.id);
@@ -160,12 +151,9 @@ export default function LearningWorkspace() {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [spokenWord, setSpokenWord] = useState<SpokenHighlight | null>(null);
   const [speakingTarget, setSpeakingTarget] = useState<string | null>(null);
-  const cadenceRef = useRef<{
-    timer: ReturnType<typeof setTimeout> | null;
-    tokens: Array<{ charIndex: number; charLength: number; word: string }>;
-    index: number;
-    targetId: string;
-  }>({ timer: null, tokens: [], index: 0, targetId: "" });
+  const readAlong = useRef<ReturnType<typeof createReadAlong> | null>(null);
+  const speechGeneration = useRef(0);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const voiceRef = useRef<HTMLDivElement>(null);
   const player = useRef<HTMLVideoElement>(null);
   const narration = useRef<HTMLAudioElement | null>(null);
@@ -214,10 +202,10 @@ export default function LearningWorkspace() {
   }
   function stopAudio() {
     narration.current?.pause();
-    if (cadenceRef.current.timer) {
-      clearTimeout(cadenceRef.current.timer);
-      cadenceRef.current.timer = null;
-    }
+    speechGeneration.current++;
+    readAlong.current?.stop();
+    readAlong.current = null;
+    utteranceRef.current = null;
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
         window.speechSynthesis.cancel();
@@ -274,7 +262,7 @@ export default function LearningWorkspace() {
   const clearedGaps = actionableConcepts.filter(
     (c) => state?.progress[c.id] === "passed_check"
   ).length;
-  const gapsPercent = totalGaps > 0 ? Math.round((clearedGaps / totalGaps) * 100) : 100;
+  const gapsPercent = totalGaps > 0 ? Math.round((clearedGaps / totalGaps) * 100) : 0;
   const allGapsCleared = totalGaps > 0 && clearedGaps === totalGaps;
   const phasePrereqIds = phase?.prerequisite_ids || [];
   const phasePrereqTotal = phasePrereqIds.length;
@@ -385,121 +373,41 @@ export default function LearningWorkspace() {
       return;
     }
 
-    const tokens = getWordTokens(textToRead);
-    if (tokens.length === 0) return;
-
-    setSpeakingTarget(targetId);
-
-    // 1. Instant first word highlight for immediate visual feedback
-    setSpokenWord({
-      targetId,
-      charIndex: tokens[0].charIndex,
-      charLength: tokens[0].charLength,
-    });
-
-    cadenceRef.current = {
-      timer: null,
-      tokens,
-      index: 0,
-      targetId,
-    };
-
-    // 2. Universal Cadence Driver (ensures live word highlighting across all platforms)
-    function advanceCadence(idx: number) {
-      if (idx >= tokens.length) {
-        stopAudio();
-        return;
-      }
-      cadenceRef.current.index = idx;
-      setSpokenWord({
-        targetId,
-        charIndex: tokens[idx].charIndex,
-        charLength: tokens[idx].charLength,
-      });
-
-      const token = tokens[idx];
-      let durationMs = Math.max(260, Math.min(520, 260 + (token.charLength - 3) * 25));
-      const nextChar = textToRead[token.charIndex + token.charLength];
-      if (nextChar === "." || nextChar === "!" || nextChar === "?") {
-        durationMs += 250;
-      } else if (nextChar === "," || nextChar === ";" || nextChar === ":") {
-        durationMs += 130;
-      }
-
-      cadenceRef.current.timer = setTimeout(() => {
-        advanceCadence(idx + 1);
-      }, durationMs);
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      setError("Browser narration is unavailable. Choose another voice or read the lesson text.");
+      return;
     }
-
-    let firstDuration = Math.max(260, Math.min(520, 260 + (tokens[0].charLength - 3) * 25));
-    const firstNextChar = textToRead[tokens[0].charIndex + tokens[0].charLength];
-    if (firstNextChar === "." || firstNextChar === "!" || firstNextChar === "?") firstDuration += 250;
-    else if (firstNextChar === "," || firstNextChar === ";" || firstNextChar === ":") firstDuration += 130;
-
-    cadenceRef.current.timer = setTimeout(() => {
-      advanceCadence(1);
-    }, firstDuration);
-
-    // 3. Audio Speech Synthesis Integration (with onboundary audio-sync and GC protection)
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.resume();
-
-        const utterance = new SpeechSynthesisUtterance(textToRead);
-        utterance.rate = 1.0;
-        utterance.lang = "en-US";
-        const voice = getPreferredBrowserVoice();
-        if (voice) {
-          utterance.voice = voice;
+    const generation = speechGeneration.current;
+    setSpeakingTarget(targetId);
+    readAlong.current = createReadAlong(textToRead, word => {
+      if (generation === speechGeneration.current) setSpokenWord({ targetId, ...word });
+    });
+    try {
+      window.speechSynthesis.resume();
+      const utterance = new SpeechSynthesisUtterance(textToRead);
+      utterance.rate = 1.0;
+      utterance.lang = "en-US";
+      const voice = getPreferredBrowserVoice();
+      if (voice) utterance.voice = voice;
+      utterance.onboundary = event => {
+        if (generation === speechGeneration.current) readAlong.current?.boundary(event);
+      };
+      utterance.onend = () => {
+        if (generation === speechGeneration.current) stopAudio();
+      };
+      utterance.onerror = event => {
+        if (generation !== speechGeneration.current) return;
+        stopAudio();
+        if (event.error !== "canceled" && event.error !== "interrupted") {
+          setError("Browser narration could not play. Choose another voice or read the lesson text.");
         }
-
-        utterance.onboundary = (event: SpeechSynthesisEvent) => {
-          if (event.name === "word" || !event.name) {
-            let idx = event.charIndex;
-            while (idx < textToRead.length && /\s/.test(textToRead[idx])) {
-              idx++;
-            }
-            let len = event.charLength;
-            if (!len || len <= 0) {
-              const match = textToRead.slice(idx).match(/^[\p{L}\p{N}'’_-]+/u);
-              len = match ? match[0].length : (textToRead.slice(idx).match(/^\S+/)?.[0].length || 1);
-            } else {
-              const rawSlice = textToRead.slice(idx, idx + len);
-              const wordMatch = rawSlice.match(/^[\p{L}\p{N}'’_-]+/u);
-              if (wordMatch) {
-                len = wordMatch[0].length;
-              }
-            }
-            // Authoritative audio boundary event updates active word
-            setSpokenWord({
-              targetId,
-              charIndex: idx,
-              charLength: len,
-            });
-            const matchedIdx = tokens.findIndex((t) => t.charIndex >= idx);
-            if (matchedIdx >= 0) {
-              cadenceRef.current.index = matchedIdx;
-            }
-          }
-        };
-
-        utterance.onend = () => {
-          stopAudio();
-        };
-
-        utterance.onerror = (e) => {
-          // If canceled or interrupted explicitly, stop.
-          // If synthesis-failed (e.g. Linux desktop without speech daemon), cadence timer keeps visual read-along flowing!
-          if (e.error === "canceled" || e.error === "interrupted") {
-            stopAudio();
-          }
-        };
-
-        (window as unknown as { _activeUtterance: unknown })._activeUtterance = utterance;
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        // Cadence timer continues seamlessly
+      };
+      utteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      if (generation === speechGeneration.current) {
+        stopAudio();
+        setError("Browser narration could not play. Choose another voice or read the lesson text.");
       }
     }
   }
@@ -512,6 +420,7 @@ export default function LearningWorkspace() {
 
     const targetId = `${kind}-${target}`;
     const activeVoice = user?.preferences?.voice || "Browser";
+    const generation = speechGeneration.current;
 
     // If active voice is Browser (default), directly play native speech with live word highlighting
     if (activeVoice === "Browser") {
@@ -530,13 +439,15 @@ export default function LearningWorkspace() {
         `/recordings/${id}/narration`,
         { kind, target },
       );
+      if (generation !== speechGeneration.current) return;
       const audio = new Audio(result.audio_url);
       narration.current = audio;
       setSpeakingTarget(targetId);
-      audio.onended = () => setSpeakingTarget(null);
-      audio.onerror = () => setSpeakingTarget(null);
+      audio.onended = () => { if (generation === speechGeneration.current) stopAudio(); };
+      audio.onerror = () => { if (generation === speechGeneration.current) stopAudio(); };
       await audio.play();
     } catch {
+      if (generation !== speechGeneration.current) return;
       // If cloud TTS is unavailable (e.g. 503 Service Unavailable), fallback gracefully to browser voice with highlighting
       try {
         speakBrowser(kind, target);
@@ -569,12 +480,23 @@ export default function LearningWorkspace() {
         {error && (
           <div
             role="alert"
-            className="my-5 rounded-xl border border-red-800 bg-red-950/30 p-4 text-sm text-red-200"
+            className="my-5 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200"
           >
             {error}
           </div>
         )}
-        {!record ? (
+        {record?.content_warnings?.map((warning) => (
+          <div key={warning} role="status" className="my-5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            {warning}
+          </div>
+        ))}
+        {!record && error ? (
+          <div className={`${panel} mt-7 p-6`}>
+            <h1 className="text-xl font-semibold">Unable to open this lesson</h1>
+            <p className="mt-2 text-sm text-[var(--muted-ink)]">Try again or return to your lecture library.</p>
+            <button className={`${secondary} mt-4`} onClick={() => { setError(""); void load(); }}>Try again</button>
+          </div>
+        ) : !record ? (
           <div className="mt-7 space-y-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-2">
@@ -734,7 +656,7 @@ export default function LearningWorkspace() {
                             Full Media & Transcript Preserved
                           </strong>
                           <p className="text-[var(--muted-ink)] leading-relaxed">
-                            Your audio/video and timestamped transcript are permanently saved and searchable in the review player on the right.
+                            Your audio/video and timestamped transcript are saved and searchable in the review player on the right.
                           </p>
                         </div>
                       </div>
@@ -858,7 +780,7 @@ export default function LearningWorkspace() {
                           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                         ) : (
                           <span className="text-[10px] font-mono font-bold text-[var(--ink)]">
-                            {gapsPercent}%
+                            {totalGaps ? `${gapsPercent}%` : "—"}
                           </span>
                         )}
                       </div>
@@ -875,7 +797,7 @@ export default function LearningWorkspace() {
                     {/* Tooltip to the left */}
                     <div className="absolute right-full mr-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl bg-[var(--surface)] border border-[var(--line)] shadow-xl text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                       <span className="font-semibold text-[var(--ink)]">Prerequisite Progress: </span>
-                      <span className="font-mono text-[var(--accent-ink)] font-bold">{clearedGaps} of {totalGaps} checks passed ({gapsPercent}%)</span>
+                      <span className="font-mono text-[var(--accent-ink)] font-bold">{totalGaps ? `${clearedGaps} of ${totalGaps} checks passed (${gapsPercent}%)` : "No prerequisite checks available"}</span>
                     </div>
                   </button>
 
@@ -941,7 +863,7 @@ export default function LearningWorkspace() {
                         Phase {doc.phases.findIndex((p) => p.id === phase.id) + 1}: {phase.title}
                       </p>
                       <p className="text-[10px] text-[var(--muted-ink)] font-mono">
-                        {phasePrereqPending === 0 ? "Phase checks passed" : `${phasePrereqPending} phase checks remaining`}
+                        {phasePrereqTotal === 0 ? "No phase checks available" : phasePrereqPending === 0 ? "Phase checks passed" : `${phasePrereqPending} phase checks remaining`}
                       </p>
                     </div>
                   </div>
@@ -996,7 +918,7 @@ export default function LearningWorkspace() {
                         Prerequisite checks
                       </span>
                       <span className={`font-mono font-bold ${allGapsCleared ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                        {clearedGaps}/{totalGaps} passed ({gapsPercent}%)
+                        {totalGaps ? `${clearedGaps}/${totalGaps} passed (${gapsPercent}%)` : "No checks available"}
                       </span>
                     </div>
                     <div className="h-2 w-full rounded-full bg-[var(--line)]/60 overflow-hidden">
@@ -1006,7 +928,9 @@ export default function LearningWorkspace() {
                       />
                     </div>
                     <p className="text-[11px] text-[var(--muted-ink)]">
-                      {allGapsCleared
+                      {totalGaps === 0
+                        ? "No prerequisite checks are available for this saved lesson."
+                        : allGapsCleared
                         ? "You passed each available prerequisite check for this lecture."
                         : `${totalGaps - clearedGaps} prerequisite checks remain. Review them whenever you need support.`}
                     </p>
@@ -1036,11 +960,13 @@ export default function LearningWorkspace() {
                         Prerequisite check progress
                       </span>
                       <span className="text-xs text-[var(--muted-ink)] font-mono">
-                        {allGapsCleared ? "All Checks Passed" : `${totalGaps - clearedGaps} Checks Remaining`}
+                        {totalGaps === 0 ? "No Checks Available" : allGapsCleared ? "All Checks Passed" : `${totalGaps - clearedGaps} Checks Remaining`}
                       </span>
                     </div>
                     <h3 className="text-xl font-bold tracking-tight text-[var(--ink)]">
-                      {allGapsCleared
+                      {totalGaps === 0
+                        ? "No prerequisite checks available"
+                        : allGapsCleared
                         ? "All available prerequisite checks passed"
                         : `Prerequisite checks: ${clearedGaps} of ${totalGaps} passed (${gapsPercent}%)`}
                     </h3>
@@ -1202,7 +1128,7 @@ export default function LearningWorkspace() {
                           ) : (
                             <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 rounded-full">
                               <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-                              {phasePrereqPending} {phasePrereqPending === 1 ? "prerequisite gap" : "prerequisite gaps"} unverified
+                              {phasePrereqPending} prerequisite {phasePrereqPending === 1 ? "check" : "checks"} available
                             </span>
                           )
                         )}
@@ -1218,7 +1144,7 @@ export default function LearningWorkspace() {
                             <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
                             <div>
                               <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
-                                Foundational Prerequisite Alert ({phasePrereqPending} unverified)
+                                Background knowledge for this phase
                               </p>
                               <p className="text-xs text-[var(--ink)] mt-0.5">
                                 This phase may need background knowledge that the recording does not explain. Use the checks and examples below if you need them.
@@ -1890,10 +1816,10 @@ export default function LearningWorkspace() {
                       <div className="pt-3 border-t border-[var(--line)]">
                         <span className="text-[10px] font-mono uppercase tracking-wider text-sky-700 dark:text-sky-400 font-semibold flex items-center gap-1">
                           <BookOpen className="w-3 h-3" />
-                          Covered in Lecture (Cross-References)
+                          Lecture concepts & possible prerequisites
                         </span>
                         <p className="mt-1 text-[11px] text-[var(--muted-ink)]">
-                          Concepts already taught by the instructor in this recording. No prerequisite check required.
+                          Coverage labels distinguish explained concepts from possible prerequisites without an available check.
                         </p>
 
                         <div className="mt-3 space-y-3">
@@ -1907,7 +1833,7 @@ export default function LearningWorkspace() {
                               </strong>
                               <div className="mt-1.5 flex items-center gap-1.5">
                                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-800 dark:text-sky-300 bg-sky-500/15 border border-sky-500/30 px-2 py-0.5 rounded-full">
-                                  <Check className="w-3 h-3" /> Covered in Lecture · No check required
+                                  {c.coverage === "explained_elsewhere" ? <Check className="w-3 h-3" /> : <HelpCircle className="w-3 h-3" />} {labels[c.coverage]}
                                 </span>
                               </div>
                               <p className="mt-1.5 text-[11px] text-[var(--muted-ink)] leading-relaxed">

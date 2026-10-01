@@ -355,7 +355,7 @@ export default function JourneyPreview() {
       </div>
 
       <div className="preview-note flex items-center justify-between text-[10px] text-[var(--muted-ink)]">
-        <span>Illustrative example · Your lessons use your recording’s evidence.</span>
+        <span>Interactive preview · Your lesson keeps original recording excerpts within reach.</span>
         <span className="font-mono text-[var(--accent-ink)] font-medium hidden sm:inline">
           {item.timeRange}
         </span>

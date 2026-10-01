@@ -1,6 +1,7 @@
 """Single-worker lease queue. Kill/restart safely; output publication is atomic."""
 import logging
 import hashlib
+import re
 import threading
 import time
 from sqlalchemy import or_, text
@@ -26,6 +27,25 @@ def media_digest(backend, key):
             for chunk in iter(lambda: source.read(1024 * 1024), b''):
                 digest.update(chunk)
     return digest.digest()
+
+
+def stored_media_digest(recording_id, backend, key):
+    """Reuse server-computed hashes for immutable recording objects."""
+    with SessionLocal() as db:
+        rec = db.get(Recording, recording_id)
+        if rec is None or (rec.storage_backend, rec.object_key) != (backend, key):
+            raise ValueError('Recording object changed while comparing media')
+        identity = db.get(MediaIdentity, recording_id)
+        if identity and re.fullmatch(r'[a-f0-9]{64}', identity.sha256):
+            return bytes.fromhex(identity.sha256)
+    digest = media_digest(backend, key)
+    with SessionLocal() as db:
+        rec = db.get(Recording, recording_id)
+        if rec is None or (rec.storage_backend, rec.object_key) != (backend, key):
+            raise ValueError('Recording object changed while comparing media')
+        db.merge(MediaIdentity(recording_id=recording_id, sha256=digest.hex()))
+        db.commit()
+    return digest
 
 
 def copy_document(document, recording_id):
@@ -65,16 +85,10 @@ def identical_verified_lesson(recording_id, owner_id, backend, key, duration):
         except ValueError:
             continue
         checked.append((source_id, source_backend, source_key, document))
-    uploaded_digest = media_digest(backend, key)
-    with SessionLocal() as db:
-        db.merge(MediaIdentity(recording_id=recording_id, sha256=uploaded_digest.hex()))
-        db.commit()
+    uploaded_digest = stored_media_digest(recording_id, backend, key)
     for source_id, source_backend, source_key, document in checked:
         try:
-            source_digest = media_digest(source_backend, source_key)
-            with SessionLocal() as db:
-                db.merge(MediaIdentity(recording_id=source_id, sha256=source_digest.hex()))
-                db.commit()
+            source_digest = stored_media_digest(source_id, source_backend, source_key)
             if source_digest == uploaded_digest:
                 return source_id, copy_document(document, recording_id)
         except (OSError, ValueError, ClientError) as exc:

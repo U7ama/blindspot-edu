@@ -1,6 +1,9 @@
 # Deployment runbook
 
-This configuration is not evidence of a live deployment. Do not provision until remaining credit/expiry/service eligibility, regional pricing and the hostname are verified. Keep a receipt of those checks in private operator records.
+> **AI-agent operations:** The CLI examples below document manual setup. For Blindspot Edu agent-managed AWS resource operations, use the configured AWS MCP tools as specified in `AGENTS.md`. The official AWS login and Agent Toolkit setup commands remain CLI-based.
+
+
+The CloudFormation template alone is not evidence of a live deployment; the current production deployment is documented in `docs/hackathon/18-deployed-architecture.md`. Before changing or adding infrastructure, recheck remaining credit, expiry, service eligibility, regional pricing, and hostname cost. Keep receipts in private operator records.
 
 ## Preflight and infrastructure
 
@@ -52,14 +55,27 @@ DATABASE_URL=sqlite:////var/lib/blindspot/blindspot.db
 AWS_REGION=us-east-1
 STORAGE_BACKEND=s3
 S3_BUCKET_NAME=STACK_MEDIA_BUCKET
-LLM_PROVIDER=bedrock
-BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0
+LLM_PROVIDER=modelstudio
+LLM_MODEL=qwen3.7-flash
+LLM_BASE_URL=YOUR_VALIDATED_COMPATIBLE_ENDPOINT
+LLM_API_KEY=SET_PRIVATELY
+LLM_TIMEOUT=300
+LLM_MAX_RETRIES=3
 TTS_PROVIDER=polly
 PILOT_INVITE_CODE=GENERATE_A_PRIVATE_RANDOM_CODE
 HF_HOME=/var/lib/blindspot/models
-AI_TOTAL_ALLOWANCE_USD=6
-AI_LEARNER_ALLOWANCE_USD=1
+AI_TOTAL_ALLOWANCE_USD=500
+AI_LEARNER_ALLOWANCE_USD=100
+AI_DAILY_CALL_LIMIT=2000
+LLM_INPUT_USD_PER_MILLION=0.10
+LLM_OUTPUT_USD_PER_MILLION=0.50
+NOTIFICATION_EMAIL_PROVIDER=ses
+SES_REGION=us-east-1
+SES_FROM_EMAIL=notifications@blindspot-edu.online
+SES_REPLY_TO_EMAIL=usamaaslam8726@gmail.com
 ```
+
+The allowance and reservation-rate values above match the working development configuration so older $6/$1 caps do not unexpectedly interrupt long lesson generation. They are cumulative local estimates, not a price quote or AWS credit balance. The $500/$100 allowances and 2,000 calls/day exceed the $50 AWS budget and do not cap AWS hosting or guarantee provider quota. Verify provider rates, then set and record production-specific limits explicitly; do not copy development settings wholesale.
 
 Copy `deploy/systemd/*` to `/etc/systemd/system`. Copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile`. It defaults to `blindspot-edu.online`; an optional `APP_HOSTNAME` override must be supplied to the Caddy service itself, not just the app environment. Never copy the pilot invitation code into frontend environment variables.
 
@@ -104,8 +120,8 @@ Official references: [Cloudflare upload limits](https://developers.cloudflare.co
 
 ## Provider and remaining deployment gates
 
-The Bedrock/Polly environment above is the intended AWS configuration, not a forced migration. To retain the working Model Studio provider, configure LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL and LLM_API_KEY privately from the validated current setup; do not upload the development .env wholesale or expose keys to the frontend. Validate the chosen provider before switching.
+The environment above keeps the active Qwen provider and AWS Polly. Bedrock is inactive: AWS Support could not approve the requested Nova Lite/Titan access at this time after its September 28 review. Revisit a migration only after usable access and quality/cost validation. To retain the working Model Studio provider, configure LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL and LLM_API_KEY privately from the validated current setup; do not upload the development .env wholesale or expose keys to the frontend. Validate the chosen provider before switching.
 
-Completion email remains disabled by default. The existing instance role does not grant SES sending. Before enabling SES, verify a sender in the intended region and add a least-privilege ses:SendEmail policy scoped to that identity, then test recipient restrictions and delivery. Do not claim email is operational before this is complete.
+Completion email remains disabled in the local example; the deployed SES identity and production-access evidence are recorded in [the deployment architecture](../docs/hackathon/18-deployed-architecture.md). The CloudFormation template includes ses:SendEmail permission with a FromAddress condition for notifications@${AppHostname}. Before enabling SES, verify the domain/sender in the intended region, confirm that the deployed role has this policy, and test recipient restrictions and delivery. Do not claim email is operational before this is complete.
 
-The template provisions infrastructure only: installation, data/sample migration, model download, SSM connectivity, domain cutover, backup restore, actual regional cost/credit verification and the 4 GB host load test remain launch gates. Retained resources continue costing money after stack deletion. No live DNS or cloud changes were made by this configuration review.
+The template provisions infrastructure only: installation, data/sample migration, model download, SSM connectivity, domain cutover, backup restore, actual regional cost/credit verification and the 4 GB host load test remain launch gates. Retained resources continue costing money after stack deletion. These instructions describe setup and checks; they do not report a new deployment. Use the dated deployment records and current health checks to distinguish completed work from an installation checklist.

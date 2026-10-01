@@ -122,8 +122,6 @@ temp/
 *.ogg
 *.webm
 *.mp4
-!frontend/public/audio/**
-!frontend/public/audio/*
 
 
 # =========================
@@ -148,3 +146,9 @@ backend/private_data/
 # Local submission drafts, contact details, support cases, and AWS evidence.
 # Share selected redacted proof through the hackathon submission.
 docs/hackathon/
+
+# Local slide with participant names and portraits; share intentionally with judges.
+Blindspot_Student_Feedback_Slide.pptx
+
+# Permission-approved lecture distributed for the hackathon upload demonstration.
+!assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4

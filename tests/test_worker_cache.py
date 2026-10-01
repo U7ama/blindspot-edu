@@ -5,6 +5,8 @@ from backend.app.adaptive.models import Job, MediaIdentity, ProcessingProgress, 
 from backend.app.core.db import SessionLocal
 from backend.app.services.storage import get_storage_adapter
 from conftest import document
+import hashlib
+import pytest
 
 
 def recording(tmp_path, rid, owner, content, *, ready=False, public=False, title='Lecture 19'):
@@ -64,3 +66,27 @@ def test_private_recording_from_another_learner_is_not_a_cache_source(tmp_path, 
 
     assert worker.run_once()
     assert calls == ['transcribed']
+
+
+def test_known_media_hashes_reuse_without_downloading_again(tmp_path, monkeypatch):
+    recording(tmp_path, 'source', 'other', b'bytes', ready=True, public=True)
+    key = recording(tmp_path, 'target', 'student', b'bytes')
+    digest = hashlib.sha256(b'bytes').hexdigest()
+    with SessionLocal() as db:
+        db.add_all([MediaIdentity(recording_id=rid, sha256=digest) for rid in ('source', 'target')])
+        db.commit()
+    monkeypatch.setattr(worker, 'media_digest', lambda *_: (_ for _ in ()).throw(AssertionError('Media downloaded again')))
+    result = worker.identical_verified_lesson('target', 'student', 'local', key, 5)
+    assert result[0] == 'source'
+    assert result[1].segments[0].id == 'target:s0'
+
+
+def test_legacy_media_hash_is_saved_after_one_comparison(tmp_path, monkeypatch):
+    key = recording(tmp_path, 'target', 'student', b'bytes')
+    calls = []
+    monkeypatch.setattr(worker, 'media_digest', lambda *_: (calls.append(True) or hashlib.sha256(b'bytes').digest()))
+    first = worker.stored_media_digest('target', 'local', key)
+    assert worker.stored_media_digest('target', 'local', key) == first
+    assert len(calls) == 1
+    with pytest.raises(ValueError, match='object changed'):
+        worker.stored_media_digest('target', 'local', 'a' * 32 + '.mp4')

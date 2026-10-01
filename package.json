@@ -1,7 +1,0 @@
-{
-  "dependencies": {
-    "framer-motion": "^13.2.0",
-    "localtunnel": "^2.0.2",
-    "lucide-react": "^1.39.0"
-  }
-}

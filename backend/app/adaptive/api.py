@@ -10,19 +10,25 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from starlette.requests import ClientDisconnect
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import or_, text
 from backend.app.core.db import get_db
 from backend.app.services.storage import get_storage_adapter
 from backend.app.services.ai.llm import chat_completion
 from .models import Learner, Recording, MediaIdentity, LearningState, Attempt, Job, Asset, ProcessingProgress, ImportSource, EmailNotice, TranscriptCache
 from .contracts import Document
-from .session import command, answer, snapshot, public_document, TransitionError
+from .session import command, answer, snapshot, public_document, questions, TransitionError
+from .saved_documents import load_saved_document
 from .budget import actor, AllowanceExceeded
 from .media import probe, ALLOWED
 
 router = APIRouter()
 COOKIE = 'blindspot_learner'
+# Keep the two reviewed public demonstrations first; other recordings stay newest-first.
+FEATURED_RECORDING_IDS = (
+    '52987a05f44a40bcb370ae36195a1c1c',
+    '08b20015c07942189fa0b6dc8debaf16',
+)
 
 def identity(request: Request, response: Response, db=Depends(get_db)):
     raw = request.cookies.get(COOKIE, '')
@@ -45,10 +51,16 @@ def recording(db, rid, learner):
         raise HTTPException(404, 'Recording not found')
     return rec
 
-def ready(rec):
+def saved_lesson(rec):
     if rec.status != 'ready' or not rec.document:
         raise HTTPException(409, 'The lecture is not ready; processing may still be running or may have failed')
-    return Document.model_validate(rec.document)
+    try:
+        return load_saved_document(rec.document)
+    except ValidationError as exc:
+        raise HTTPException(409, 'This saved lesson has invalid data and needs administrator repair. Your recording is preserved.') from exc
+
+def ready(rec):
+    return saved_lesson(rec)[0]
 
 def state_for(db, learner, rec, doc):
     state = db.query(LearningState).filter_by(learner_id=learner.id, recording_id=rec.id).first()
@@ -56,6 +68,10 @@ def state_for(db, learner, rec, doc):
         state = LearningState(id=uuid.uuid4().hex, learner_id=learner.id, recording_id=rec.id, phase_id=doc.phases[0].id, progress={}, revision=0, generation=0, ended=False)
         db.add(state)
         db.flush()
+    elif state.active and state.active.get('question_id') and state.active['question_id'] not in questions(doc):
+        # Preserve the learner's place and progress when an older quiz is unavailable.
+        state.active = None
+        state.revision += 1
     return state
 
 def transaction(db):
@@ -99,6 +115,9 @@ def preferences(body: Preferences, learner=Depends(identity), db=Depends(get_db)
 @router.get('/recordings')
 def recordings(learner=Depends(identity), db=Depends(get_db)):
     accessible = db.query(Recording).filter(or_(Recording.public.is_(True), Recording.owner_id == learner.id)).order_by(Recording.created_at.desc(), Recording.id.desc()).all()
+    featured = {rid: index for index, rid in enumerate(FEATURED_RECORDING_IDS)}
+    accessible.sort(key=lambda rec: featured.get(rec.id, len(featured))
+                    if rec.public and rec.status == 'ready' else len(featured))
     identities = {row.recording_id: row.sha256 for row in db.query(MediaIdentity).filter(MediaIdentity.recording_id.in_([r.id for r in accessible])).all()}
     seen = set()
     visible = []
@@ -118,7 +137,7 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED or len(filename) > 200:
         raise HTTPException(400, 'Unsupported recording type')
-    if db.query(Recording).filter(Recording.owner_id == learner.id, Recording.status != 'failed').count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
+    if db.query(Recording).filter(Recording.owner_id == learner.id).count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
         raise HTTPException(429, 'Pilot upload allowance reached')
     maximum = int(os.getenv('MAX_UPLOAD_BYTES', '104857600'))
     size = 0
@@ -141,7 +160,7 @@ async def upload(request: Request, filename: str, learner=Depends(identity), db=
         storage = get_storage_adapter()
         key = await asyncio.to_thread(storage.save, file.name, filename)
     transaction(db)
-    if db.query(Recording).filter(Recording.owner_id == learner.id, Recording.status != 'failed').count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
+    if db.query(Recording).filter(Recording.owner_id == learner.id).count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
         db.rollback()
         await asyncio.to_thread(storage.delete, key)
         raise HTTPException(429, 'Pilot upload allowance reached')
@@ -175,7 +194,7 @@ def import_link(body: LinkImport, learner=Depends(identity), db=Depends(get_db))
     except ImportFailure as exc:
         raise HTTPException(400, str(exc)) from None
     transaction(db)
-    if db.query(Recording).filter(Recording.owner_id == learner.id, Recording.status != 'failed').count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
+    if db.query(Recording).filter(Recording.owner_id == learner.id).count() >= int(os.getenv('MAX_RECORDINGS_PER_LEARNER', '50')):
         raise HTTPException(429, 'Pilot upload allowance reached')
     rid = uuid.uuid4().hex
     rec = Recording(id=rid, owner_id=learner.id, title='YouTube recording' if kind == 'youtube' else 'Linked recording',
@@ -248,7 +267,11 @@ def subscribe(rid: str, body: EmailSubscription, learner=Depends(identity), db=D
 @router.get('/recordings/{rid}')
 def get_recording(rid: str, learner=Depends(identity), db=Depends(get_db)):
     rec = recording(db, rid, learner)
-    doc = public_document(ready(rec)) if rec.status == 'ready' else None
+    warnings = []
+    doc = None
+    if rec.status == 'ready':
+        saved, warnings = saved_lesson(rec)
+        doc = public_document(saved)
     segments = []
     if doc:
         segments = doc.get('segments', []) if isinstance(doc, dict) else getattr(doc, 'segments', [])
@@ -256,7 +279,7 @@ def get_recording(rid: str, learner=Depends(identity), db=Depends(get_db)):
         cached = db.get(TranscriptCache, rid)
         if cached and cached.segments:
             segments = cached.segments
-    return {**summary(rec), 'document': doc, 'segments': segments}
+    return {**summary(rec), 'document': doc, 'segments': segments, 'content_warnings': warnings}
 
 @router.post('/recordings/{rid}/retry')
 def retry(rid: str, learner=Depends(identity), db=Depends(get_db)):

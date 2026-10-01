@@ -3,7 +3,6 @@ import wave
 from pathlib import Path
 import pytest
 from backend.app.services.storage import get_storage_adapter
-from backend.app.services.ai.whiteboard.session_manager import _safe_path
 from backend.app.adaptive.budget import reserve, AllowanceExceeded
 from backend.app.core.db import SessionLocal, init_db
 from backend.app.adaptive.models import Recording, Job
@@ -24,8 +23,8 @@ def test_storage_roundtrip_and_explicit_config(tmp_path,monkeypatch):
     with pytest.raises(ValueError):storage.path('../../private.json')
 
 @pytest.mark.parametrize('value',['../../evil','/tmp/evil','a/b','a\\b','', 'a'*101])
-def test_bad_session_ids(value):
-    with pytest.raises(ValueError):_safe_path(value)
+def test_bad_storage_keys(value):
+    with pytest.raises(ValueError):get_storage_adapter('local').path(value)
 
 def test_upload_stream_limit_and_invite(client,monkeypatch):
     assert client.post('/api/v1/recordings?filename=a.wav',content=b'data').status_code==403
@@ -91,6 +90,19 @@ def test_chunked_body_limit(client,monkeypatch):
     client.post('/api/v1/invite',json={'code':'test-invitation'})
     monkeypatch.setenv('MAX_UPLOAD_BYTES','10')
     assert client.post('/api/v1/recordings?filename=a.wav',content=iter([b'x'*6,b'y'*6])).status_code==413
+
+
+def test_failed_recordings_still_count_toward_storage_allowance(client, monkeypatch):
+    import hashlib
+    client.post('/api/v1/invite', json={'code': 'test-invitation'})
+    owner = hashlib.sha256(client.cookies['blindspot_learner'].encode()).hexdigest()
+    with SessionLocal() as db:
+        db.add(Recording(id='failed', owner_id=owner, title='Failed recording', storage_backend='local',
+                         object_key='a' * 32 + '.wav', duration=5, status='failed'))
+        db.commit()
+    monkeypatch.setenv('MAX_RECORDINGS_PER_LEARNER', '1')
+    assert client.post('/api/v1/recordings?filename=a.wav', content=b'bytes').status_code == 429
+    assert client.post('/api/v1/recordings/import', json={'url': 'https://example.com/lecture.mp4', 'permission_confirmed': True}).status_code == 429
 
 
 def test_disconnected_upload_is_not_queued(client, monkeypatch):

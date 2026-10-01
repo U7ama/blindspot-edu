@@ -5,7 +5,7 @@ import re
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from .progress import report
 from .contracts import Segment, Concept, Phase, Document, Remediation, Question
-from backend.app.services.ai.llm import chat_completion
+from backend.app.services.ai.llm import chat_completion, StructuredOutputError
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class CandidateList(BaseModel):
     concepts: list[Concept] = Field(max_length=8)
 
 class WindowVerdict(BaseModel):
-    explained: bool = False
+    explained: bool
     evidence_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode='before')
@@ -53,7 +53,10 @@ class WindowVerdict(BaseModel):
                         break
             if isinstance(data.get('explained'), str):
                 val = data['explained'].lower().strip()
-                data['explained'] = val in ('true', 'yes', '1', 'explained')
+                if val in ('true', 'yes', '1', 'explained'):
+                    data['explained'] = True
+                elif val in ('false', 'no', '0', 'unexplained', 'not explained'):
+                    data['explained'] = False
         return data
 
 class Plan(BaseModel):
@@ -111,10 +114,13 @@ def call(prompt, data, shape, tokens=4096, validator=None):
                 validator(result)
             return result
         except ValueError as exc:
-            logger.warning('Validation error on %s attempt %d: %s', shape.__name__, attempt, exc)
+            # Pydantic's exception text includes rejected input; never log it.
+            logger.warning('Validation error on %s attempt %d (%s)', shape.__name__, attempt, type(exc).__name__)
             if attempt:
                 raise GenerationValidationError(shape.__name__) from None
-            if isinstance(exc, ValidationError):
+            if isinstance(exc, StructuredOutputError):
+                issues = exc.validation_issues
+            elif isinstance(exc, ValidationError):
                 issues = [{'field': list(e['loc']), 'type': e['type']} for e in exc.errors(include_input=False, include_context=False, include_url=False)[:8]]
             else:
                 # Validators below supply fixed instructions, never raw transcript values.
@@ -157,6 +163,13 @@ def validate_coverage(batch, allowed):
     batch.teachable_evidence_ids = teachable
     for item, ids in zip(batch.items, items):
         item.evidence_ids = ids
+
+
+def validate_window_verdict(verdict, allowed):
+    ids = normalize_evidence_ids(verdict.evidence_ids, allowed)
+    if verdict.explained and not ids:
+        raise ValueError('An explained prerequisite needs supporting segment IDs from this window.')
+    verdict.evidence_ids = ids
 
 
 def validate_plan(plan, eligible_ids, segment_ids):
@@ -280,6 +293,7 @@ def compile_document(segments: list[Segment]) -> Document:
         if not set(c.evidence_ids) <= all_ids:
             raise ValueError('Candidate references invalid evidence')
         supporting = []
+        inconclusive = False
         # Every candidate is checked against every window, including the ending.
         for chunk_index, chunk in enumerate(chunks):
             report('prerequisites', 'Checking whether prerequisites are explained elsewhere.', candidate_index * len(chunks) + chunk_index, len(candidates) * len(chunks), 'checks')
@@ -290,17 +304,21 @@ def compile_document(segments: list[Segment]) -> Document:
                 'Set explained=true only with evidence_ids containing the exact segment IDs that explain it.'
             )
             try:
-                verdict = call(window_prompt, {'concept': c.name, 'segments': [s.model_dump() for s in chunk]}, WindowVerdict, 4096)
+                verdict = call(window_prompt, {'concept': c.name, 'segments': [s.model_dump() for s in chunk]}, WindowVerdict, 4096, validator=lambda v: validate_window_verdict(v, allowed))
             except GenerationValidationError:
-                logger.warning('WindowVerdict validation failed for concept %s on window %d; defaulting to unexplained', c.name, chunk_index)
-                verdict = WindowVerdict(explained=False, evidence_ids=[])
-            valid = [i for i in verdict.evidence_ids if i in allowed]
-            if verdict.explained and valid:
-                supporting.extend(valid)
+                logger.warning('WindowVerdict validation failed on window %d; coverage remains uncertain', chunk_index)
+                inconclusive = True
+                continue
+            if verdict.explained:
+                supporting.extend(verdict.evidence_ids)
         if supporting:
             c.coverage = 'explained_elsewhere'
             c.explanation_evidence_ids = list(dict.fromkeys(supporting))
             c.reason = 'This prerequisite is explained elsewhere in the recording.'
+        elif inconclusive:
+            c.coverage = 'uncertain'
+            c.remediation = None
+            c.reason = 'Whether this prerequisite is explained in the recording could not be verified.'
     report('planning', 'Organizing the lecture into a learning sequence and creating questions.')
     plan = generate_plan(coverage, candidates, segments)
     segmap = {s.id: s for s in segments}

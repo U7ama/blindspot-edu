@@ -75,7 +75,7 @@ export default function PrivacyPage() {
                 </div>
               </div>
               <p className="mt-4 text-xs sm:text-sm leading-relaxed text-[var(--muted-ink)]">
-                We do not require account registration, passwords, social logins, or personal profile creation. When you visit Blindspot Edu, your browser is issued an anonymous, cryptographically signed learner session cookie.
+                We do not require account registration, passwords, social logins, or personal profile creation. When you visit Blindspot Edu, your browser is issued an anonymous learner session cookie containing a securely generated random token.
               </p>
               <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-xs text-[var(--ink)] space-y-2">
                 <p>

@@ -117,3 +117,25 @@ def test_llm_cache_avoids_repeated_network_calls(monkeypatch):
     res2 = llm.chat_completion('Unique Cache Test Prompt', 'input-1', response_model=Output, max_tokens=100)
     assert res2.val == 42
     assert len(calls) == 1  # No additional network call
+
+
+@pytest.mark.parametrize('finish_reason', ['stop', 'length'])
+def test_invalid_structured_output_preserves_safe_repair_feedback(monkeypatch, finish_reason):
+    from types import SimpleNamespace
+    from backend.app.adaptive.compiler import CoverageBatch
+    monkeypatch.setenv('LLM_PROVIDER', 'openai')
+    monkeypatch.setenv('LLM_MODEL', 'test-invalid')
+    raw = '{"items":[{"name":"private transcript", "explanation":"private student text", "evidence_ids":[]}]}'
+    result = SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish_reason, message=SimpleNamespace(content=raw))])
+    monkeypatch.setattr(llm, '_compatible_completion', lambda *a, **kw: result)
+    saved = []
+    monkeypatch.setattr(llm.llm_cache, 'save', lambda *a: saved.append(a))
+    with pytest.raises(llm.StructuredOutputError) as caught:
+        llm.chat_completion('Validate coverage', finish_reason, response_model=CoverageBatch)
+    assert caught.value.validation_issues == [
+        {'field': ['items', 0, 'possibly_missing'], 'type': 'missing'},
+        {'field': ['teachable_evidence_ids'], 'type': 'missing'},
+    ]
+    assert 'private' not in str(caught.value)
+    assert 'private' not in repr(caught.value.validation_issues)
+    assert saved == []

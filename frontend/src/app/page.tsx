@@ -134,7 +134,7 @@ export default function Home() {
         <section id="features" className="py-12 border-t border-[var(--line)]">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">BUILT FOR COMPLETE MASTERY</p>
+              <p className="eyebrow">BUILT FOR ACTIVE LEARNING</p>
               <h2>Every feature designed for active learning.</h2>
             </div>
             <p>
@@ -162,7 +162,7 @@ export default function Home() {
                 <ul className="mt-4 space-y-2 text-xs text-[var(--ink)]">
                   <li className="flex items-start gap-2">
                     <Video className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
-                    <span><strong>Direct file upload:</strong> MP4, WebM, MP3, WAV, M4A, FLAC up to 100 MB.</span>
+                    <span><strong>Direct file upload:</strong> MP4, WebM, MP3, WAV, M4A and FLAC; current limits appear in the upload workspace.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <Radio className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
@@ -322,7 +322,7 @@ export default function Home() {
                   </li>
                   <li className="flex items-start gap-2">
                     <Headphones className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
-                    <span><strong>Word-by-word karaoke tracking:</strong> Active words illuminate in real time as audio plays.</span>
+                    <span><strong>Read-along narration:</strong> Follow lesson text while listening, with browser speech highlighting where supported.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <ShieldCheck className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
@@ -335,7 +335,7 @@ export default function Home() {
                 </ul>
               </div>
               <div className="pt-4 mt-4 border-t border-[var(--line)] text-[11px] text-[var(--muted-ink)]">
-                Word-level timestamps powered by Whisper speech alignment
+                Timestamped transcripts powered by Whisper speech recognition
               </div>
             </article>
 

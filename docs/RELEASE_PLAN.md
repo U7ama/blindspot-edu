@@ -1,36 +1,21 @@
-# Release gates and operator tasks
+# Release and judging operations
 
-The implementation does not establish recording permission, pilot results, deployment availability or hackathon eligibility. These require external evidence.
+Current submission status and publication tasks are maintained in [the submission guide](SUBMISSION_DRAFT.md). Permission and student feedback are recorded there and in its supporting records. This checklist describes checks to run, not results already established.
 
-## Before publishing
+## Before publishing or replacing a release
 
-- Select the brother's course and recording language.
-- Obtain permission to process recordings and separate permission for public playback.
-- Review the full rules, residence/age/employment eligibility and original-publication requirements.
-- Confirm remaining AWS credit, expiry and covered services in Billing.
-- Confirm hostname ownership and DNS access.
-- Capture redacted proof of the coding agent's AWS-console connection. CLI identity alone is not proof of the required console connection.
-- Run local tests, frontend build, AWS adapter smoke checks and a human review of every demo citation/question.
-- Deploy early and benchmark the host before opening participant uploads.
+- Confirm eligibility, originality, and the live URL in the Builder Center submission.
+- Run backend tests, frontend typecheck, and frontend build after relevant code changes.
+- Test the public sample while logged out: source playback, incorrect diagnostic, supplementary teaching, different reassessment, return to the lesson, backward navigation, and refresh.
+- Check two learners cannot access each other's private recordings or progress.
+- Verify the submitted demo asset downloads unchanged, the judge invitation works on production, and claimed cache reuse actually matches the saved recording.
+- Review the selected evidence and active inference provider. Qwen is active; Bedrock is inactive and its requested access was not approved at this time.
+- Back up the database before migrations or deployment; retain rollback artifacts. Record restore-test results separately.
 
-## Delivery schedule
+## Through judging
 
-| Dates | Exit condition |
-|---|---|
-| Sept 19–20 | Course/permissions, 5–8 participants, credits and AWS access verified; three reviewed fixtures |
-| Sept 21–23 | Integrity/security fixes and initial public deployment; first complete prerequisite journey |
-| Sept 24–26 | AWS adapter validation, whole-lecture verification, resume/navigation and reassessment |
-| Sept 27–29 | Student pilot, second lecture, actual latency and cost checks |
-| Sept 30 | Feature freeze, ten clean demo runs and recorded demonstration |
-| Oct 1 | Submit public URL, exactly #social-good and #community, evidence and project write-up |
-| Oct 2–23 | Daily availability/error/spend checks; essential fixes only |
+Keep the public application reachable and review failed jobs, disk use, provider allowances, and AWS charges daily. Preserve the working sample during provider failures or when dynamic allowances are exhausted. Budget alerts and local generation estimates are not spending caps. The builder's $50 credits expire October 31.
 
-## Release checks
+Benchmark the proposed upload workload on the actual host before increasing duration or concurrency. Measure memory, CPU credits, processing time, and sample responsiveness with concurrent learners; successful health responses alone do not establish capacity. Do not silently increase infrastructure cost.
 
-Run `python -m pytest`, `npm run typecheck` and `npm run build`. Then test real Bedrock/Polly calls, permitted recording upload, source playback, an incorrect diagnostic, remediation, a different reassessment, backward navigation and refresh. Repeat ten times. Simulate two independent browsers and verify private recording isolation.
-
-Run the transcription benchmark on the actual host with five sample learners. Record peak memory, worker recovery and CPUCreditBalance; health checks are insufficient to establish full journey capacity. Rehearse database restoration using scripts/backup.py. Disable uploads if the host cannot maintain interactive responsiveness; do not silently increase spend.
-
-Budget target: $40 infrastructure + $6 variable services + $4 reserve through Oct 23, subject to verified regional costs and credit terms. Include IPv4, disk, backups, transfer, hostname and existing consumption. Budget alerts are not hard caps. The application's inference ledger reserves conservatively before provider calls and persists across restarts. Do not lower configured pricing bounds below the selected provider's rates. Reserves do not include hosting charges.
-
-The current release supports English narration. Other lecture languages require transcription and content evaluation before making support claims. No learner state is called mastery; `passed_check` only means the associated question was answered correctly.
+Retain accurate content labels and assessment status: “Passed this check” reports the individual check, not mastery. Record broader learning evaluation as future work unless actual comparable measurements are available.

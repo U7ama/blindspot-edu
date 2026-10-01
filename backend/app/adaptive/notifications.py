@@ -15,8 +15,12 @@ logger = logging.getLogger(__name__)
 
 def enabled():
     url = urlsplit(os.getenv('PUBLIC_APP_URL', ''))
+    local_development = (os.getenv('APP_ENV') == 'development'
+                         and url.scheme == 'http'
+                         and url.hostname in ('localhost', '127.0.0.1', '::1'))
+    secure_url = url.scheme == 'https' and bool(url.hostname)
     return (os.getenv('NOTIFICATION_EMAIL_PROVIDER', 'disabled') == 'ses'
-            and bool(os.getenv('SES_FROM_EMAIL')) and url.scheme == 'https' and bool(url.hostname)
+            and bool(os.getenv('SES_FROM_EMAIL')) and (secure_url or local_development)
             and not url.username and not url.password and not url.query and not url.fragment)
 
 

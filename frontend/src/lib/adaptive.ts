@@ -48,6 +48,7 @@ export type Recording = {
   error: string | null;
   document?: Lesson | null;
   segments?: Evidence[];
+  content_warnings?: string[];
 };
 export type Active = {
   mode: string;
@@ -103,7 +104,7 @@ export function me() {
 }
 export async function request<T>(path: string, body?: unknown): Promise<T> {
   await me();
-  return raw<T>(
+  const result = await raw<T>(
     path,
     body === undefined
       ? undefined
@@ -113,6 +114,11 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
           body: JSON.stringify(body),
         },
   );
+  // Bootstrap is shared, but learner permissions and preferences are mutable.
+  if (body !== undefined && (path === "/invite" || path === "/preferences")) {
+    boot = undefined;
+  }
+  return result;
 }
 export async function upload(file: File, onProgress?: (sent: number, total: number) => void, signal?: AbortSignal) {
   await me();

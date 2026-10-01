@@ -196,7 +196,7 @@ export default function TermsPage() {
                 THE SERVICE IS PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT WARRANTIES OF ANY KIND. TO THE FULLEST EXTENT PERMISSIBLE BY LAW, BLINDSPOT EDU DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED.
               </p>
               <p className="mt-3 text-xs sm:text-sm text-[var(--muted-ink)] leading-relaxed">
-                While we ground all explanations in verbatim timestamps and strict evidence receipts, AI models can make errors. Learners should always cross-reference critical topics with official syllabus textbooks and primary faculty instructions.
+                Lecture explanations link to supporting excerpts and timestamps; added teaching is labelled supplementary. AI models can make errors. Learners should always cross-reference critical topics with official syllabus textbooks and primary faculty instructions.
               </p>
             </article>
           </div>

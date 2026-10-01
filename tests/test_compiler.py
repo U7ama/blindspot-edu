@@ -295,7 +295,8 @@ def test_failed_optional_checkpoint_does_not_skip_next_checkpoint(monkeypatch):
     assert document.concepts[1].remediation is not None
 
 
-def test_window_verdict_validation_failure_falls_back(monkeypatch):
+@pytest.mark.parametrize('explained_later', [False, True])
+def test_window_verdict_failure_does_not_establish_a_gap(monkeypatch, explained_later):
     segments = [
         Segment(id='s1', start=0, end=5, text='First concept introduction.'),
         Segment(id='s2', start=10, end=20, text='Second concept detail.'),
@@ -309,13 +310,71 @@ def test_window_verdict_validation_failure_falls_back(monkeypatch):
         if shape is c.CandidateList:
             return c.CandidateList(concepts=[Concept(id='topic', name='Topic', coverage='under_explained', reason='Assumed', evidence_ids=['s1'])])
         if shape is c.WindowVerdict:
+            if explained_later and data['segments'][0]['id'] == 's2':
+                return c.WindowVerdict(explained=True, evidence_ids=['s2'])
             raise c.GenerationValidationError('WindowVerdict')
         if shape is c.Plan:
+            assert data['allowed_prerequisite_ids'] == []
             return c.Plan(phases=[Phase(id='p', title='Topic', teaching_script='Coherent topic explained.', evidence_ids=['s1'])])
         return c.Verdict(supported=True, reason='Supported')
     monkeypatch.setattr(c, 'windows', lambda s: [[s[0]], [s[1]]])
     monkeypatch.setattr(c, 'call', fake)
     doc = c.compile_document(segments)
     assert len(doc.phases) == 1
-    assert doc.concepts[0].coverage != 'explained_elsewhere'
+    assert doc.concepts[0].coverage == ('explained_elsewhere' if explained_later else 'uncertain')
+    assert doc.concepts[0].remediation is None
 
+
+@pytest.mark.parametrize('payload', [{}, {'explained': 'maybe'}])
+def test_window_verdict_requires_an_explicit_boolean(payload):
+    with pytest.raises(ValueError):
+        c.WindowVerdict.model_validate(payload)
+
+
+@pytest.mark.parametrize('ids', [[], ['invented']])
+def test_explained_window_requires_valid_support(ids):
+    with pytest.raises(ValueError):
+        c.validate_window_verdict(c.WindowVerdict(explained=True, evidence_ids=ids), {'s1'})
+
+
+def test_window_verdict_invalid_evidence_gets_one_correction(monkeypatch):
+    responses = iter([c.WindowVerdict(explained=True, evidence_ids=['invented']), c.WindowVerdict(explained=True, evidence_ids=['s1'])])
+    calls = []
+    def fake(*args, **kwargs):
+        calls.append(args)
+        return next(responses)
+    monkeypatch.setattr(c, 'chat_completion', fake)
+    verdict = c.call('Check', {}, c.WindowVerdict, validator=lambda v: c.validate_window_verdict(v, {'s1'}))
+    assert verdict.evidence_ids == ['s1'] and len(calls) == 2
+
+
+def test_validation_logging_does_not_expose_rejected_input(monkeypatch, caplog):
+    marker = 'PRIVATE_TRANSCRIPT_MARKER'
+    def invalid(*args, **kwargs):
+        return c.WindowVerdict.model_validate({'explained': [marker]})
+    monkeypatch.setattr(c, 'chat_completion', invalid)
+    with pytest.raises(c.GenerationValidationError):
+        c.call('Check', {}, c.WindowVerdict)
+    assert marker not in caplog.text
+    assert 'ValidationError' in caplog.text
+def test_adapter_schema_errors_reach_bounded_correction(monkeypatch):
+    import json
+    from pydantic import ValidationError
+    from backend.app.services.ai.llm import StructuredOutputError
+    from backend.app.adaptive import compiler as c
+    try:
+        c.CoverageBatch.model_validate({'items': []})
+    except ValidationError as exc:
+        failure = StructuredOutputError(c.CoverageBatch, exc)
+    requests = []
+    def generate(prompt, data, **kwargs):
+        requests.append(json.loads(data))
+        if len(requests) == 1:
+            raise failure
+        return c.CoverageBatch(items=[], teachable_evidence_ids=[])
+    monkeypatch.setattr(c, 'chat_completion', generate)
+    c.call('Extract coverage', {'source': 'original evidence'}, c.CoverageBatch)
+    assert len(requests) == 2
+    assert requests[1]['validation_issues'] == [{'field': ['teachable_evidence_ids'], 'type': 'missing'}]
+    assert requests[1]['original_input'] == requests[0]
+    assert requests[1]['previous_output'] is None

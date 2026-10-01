@@ -140,11 +140,9 @@ export default function Library() {
               </div>
             ) : items.length === 0 ? (
               <div className={panel}>
-                <h2 className="text-lg font-medium">No lecture is available yet</h2>
+                <h2 className="text-lg font-medium">No lectures available yet</h2>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted-ink)]">
-                  An administrator must publish a permission-approved lecture, or
-                  an invited participant can upload a recording. No lecture
-                  content is invented automatically.
+                  Lectures available to you will appear here. If uploads are enabled for your account, add a recording above to start learning.
                 </p>
               </div>
             ) : (
@@ -227,23 +225,33 @@ export default function Library() {
                     }}/><Volume2 className="h-4 w-4"/> Spoken alert while this app is open
                   </label>
                 </div>
-                {user.email_notifications_enabled && <label className="block text-sm text-[var(--muted-ink)]">
-                  Email me when the lesson is ready (optional)
-                  <input type="email" maxLength={254} autoComplete="email" value={notifyEmail} disabled={busy || capturing}
-                    onChange={e => setNotifyEmail(e.target.value)} placeholder="you@example.com"
-                    className="mt-2 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3.5 py-2.5 text-sm text-[var(--ink)] placeholder:text-[var(--muted-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-ink)]/50"/>
-                  <span className="mt-1 block text-xs">Saved as a one-time alert as soon as your recording is accepted. The email does not grant access to a private lesson.</span>
-                </label>}
-                {mode==="file" ? <label className={`${button} w-full cursor-pointer inline-flex items-center justify-center gap-2`}>
-                  <Upload className="w-4 h-4"/>{busy ? "Uploading…" : "Choose audio or video"}
-                  <input aria-label="Upload a lecture recording" className="sr-only" type="file" accept=".wav,.mp3,.m4a,.mp4,.flac,.ogg,.aac,.webm" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)void ingest(f);e.target.value="";}}/>
-                </label> : mode==="record" ? <LectureRecorder limits={user.limits} busy={busy} onSubmit={ingest} onCaptureChange={setCapturing}/> : <form onSubmit={e=>{e.preventDefault();void ingestLink();}} className="import-link-form">
-                  <label htmlFor="lecture-url">Lecture URL</label>
-                  <input id="lecture-url" type="url" required maxLength={4096} value={url} disabled={busy} onChange={e=>setUrl(e.target.value)} placeholder="https://www.youtube.com/watch?v=…"/>
-                  <p>Public YouTube videos or direct HTTPS MP4, WebM and audio files. Private pages, playlists and live streams aren’t supported. YouTube imports include video and audio up to 480p. If a compatible stream is unavailable or downloading is restricted, upload the file instead.</p>
-                  <label className="permission-check"><input type="checkbox" checked={permission} disabled={busy} onChange={e=>setPermission(e.target.checked)}/>I have permission to download and process this recording.</label>
-                  <button className={`${button} w-full`} disabled={busy || !permission || !url.trim()}>{busy ? "Queueing import…" : "Import lecture"}</button>
-                </form>}
+                {user.email_notifications_enabled && (
+                  <label className="mt-4 block text-sm text-[var(--muted-ink)]">
+                    Email me when the lesson is ready (optional)
+                    <input type="email" maxLength={254} autoComplete="email" value={notifyEmail} disabled={busy || capturing}
+                      onChange={e => setNotifyEmail(e.target.value)} placeholder="you@example.com"
+                      className="mt-2 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3.5 py-2.5 text-sm text-[var(--ink)] placeholder:text-[var(--muted-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-ink)]/50"/>
+                    <span className="mt-1 block text-xs">Saved as a one-time alert as soon as your recording is accepted. The email does not grant access to a private lesson.</span>
+                  </label>
+                )}
+                <div className="mt-4">
+                  {mode==="file" ? (
+                    <label className={`${button} w-full cursor-pointer inline-flex items-center justify-center gap-2`}>
+                      <Upload className="w-4 h-4"/>{busy ? "Uploading…" : "Choose audio or video"}
+                      <input aria-label="Upload a lecture recording" className="sr-only" type="file" accept=".wav,.mp3,.m4a,.mp4,.flac,.ogg,.aac,.webm" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)void ingest(f);e.target.value="";}}/>
+                    </label>
+                  ) : mode==="record" ? (
+                    <LectureRecorder limits={user.limits} busy={busy} onSubmit={ingest} onCaptureChange={setCapturing}/>
+                  ) : (
+                    <form onSubmit={e=>{e.preventDefault();void ingestLink();}} className="import-link-form">
+                      <label htmlFor="lecture-url">Lecture URL</label>
+                      <input id="lecture-url" type="url" required maxLength={4096} value={url} disabled={busy} onChange={e=>setUrl(e.target.value)} placeholder="https://www.youtube.com/watch?v=…"/>
+                      <p>Public YouTube videos or direct HTTPS MP4, WebM and audio files. Private pages, playlists and live streams aren’t supported. YouTube imports include video and audio up to 480p. If a compatible stream is unavailable or downloading is restricted, upload the file instead.</p>
+                      <label className="permission-check"><input type="checkbox" checked={permission} disabled={busy} onChange={e=>setPermission(e.target.checked)}/>I have permission to download and process this recording.</label>
+                      <button className={`${button} w-full`} disabled={busy || !permission || !url.trim()}>{busy ? "Queueing import…" : "Import lecture"}</button>
+                    </form>
+                  )}
+                </div>
                 {uploadBytes && <div className="upload-progress" role="status">
                   <strong>{uploadBytes.sent < uploadBytes.total ? "Uploading recording" : "Upload sent · validating media"}</strong>
                   <progress aria-label="File upload progress" value={uploadBytes.sent} max={uploadBytes.total || 1}/>

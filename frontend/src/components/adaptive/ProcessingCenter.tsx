@@ -107,8 +107,8 @@ export default function ProcessingCenter({record, user, onRetry, retrying = fals
         <div className="processing-orbit">{failed ? <AlertCircle size={28}/> : <BrainCircuit size={28}/>}</div>
         <div>
           <p className="eyebrow">{replayVerified ? "VERIFIED LESSON REVIEW" : failed ? "CONTINUE FROM SAVED CHECKPOINTS" : "YOUR RECORDING IS IN GOOD HANDS"}</p>
-          <h2>{failed ? "Processing needs attention" : "Building your learning experience"}</h2>
-          <p>{replayVerified ? "This lecture was already uploaded. The next 20 seconds replay completed steps for demonstration; transcription and AI are not running again." : failed ? "Review what completed and what remains before retrying." : "Long recordings can take a while. Here’s what is actually happening."}</p>
+          <h2>{failed ? "Processing needs attention" : replayVerified ? "Your lesson is ready" : "Building your learning experience"}</h2>
+          <p>{replayVerified ? "This lecture was already uploaded. The next 20 seconds review its completed steps. Your saved transcript and lesson are ready to open now." : failed ? "Review what completed and what remains before retrying." : "Long recordings can take a while. Here’s what is actually happening."}</p>
         </div>
       </div>
       <div className="processing-live" role={failed ? "alert" : "status"}>
@@ -122,7 +122,7 @@ export default function ProcessingCenter({record, user, onRetry, retrying = fals
             : "This stage updates when real work completes. No estimated finish time yet.")}</p>
         </div>
       </div>
-      {replayVerified && <div className="stage-progress"><div><span>Completed checks walkthrough</span><span>{Math.min(replaySeconds, Math.floor(replayElapsed))} / {replaySeconds} seconds</span></div><progress max={replaySeconds} value={replayElapsed} aria-label="Completed checks walkthrough"/></div>}
+      {replayVerified && <div className="stage-progress"><div><span>Verified lesson pipeline preview</span><span>{Math.min(replaySeconds, Math.floor(replayElapsed))} / {replaySeconds} seconds</span></div><progress max={replaySeconds} value={replayElapsed} aria-label="Verified lesson pipeline preview"/></div>}
       {!replayVerified && lastProgress?.current != null && <div className="stage-progress"><div><span>{lastProgress.unit === "seconds" ? "Audio timestamp reached" : lastProgress.unit === "bytes" ? "Downloaded" : failed || queued ? "Completed before interruption" : "Completed in this stage"}</span><span>{currentLabel}{lastProgress.total ? " / "+totalLabel : ""}{lastProgress.unit && !["seconds","bytes"].includes(lastProgress.unit) ? " "+lastProgress.unit : ""}</span></div>{!!lastProgress.total && <progress max={lastProgress.total} value={Math.min(lastProgress.current, lastProgress.total)} aria-label="Current stage progress"/>}</div>}
       {failed && active >= 0 && <p className="processing-summary">{active} of {visibleStages.length} stages completed · {visibleStages.length-active} remaining, including the interrupted stage</p>}
       <ol className="processing-steps" aria-label="Processing stages">{visibleStages.map((s,i) => {
@@ -135,7 +135,7 @@ export default function ProcessingCenter({record, user, onRetry, retrying = fals
         {replayVerified && <button className="ui-button ui-primary" onClick={onOpenVerified}><CheckCheck size={16}/>Open lesson now</button>}
         {failed && onRetry && <button className="ui-button ui-primary" disabled={retrying} onClick={() => void onRetry()}><RotateCcw size={16}/>{retrying ? "Retrying…" : "Retry processing"}</button>}
       </div>
-      <div className="processing-footer"><Clock3 size={14}/><span>{replayVerified ? `${elapsed} seconds into the completed-checks review` : `${timestamp(elapsed)} ${failed ? "until the last update" : "since submission"}`}</span><span>{replayVerified ? "Lesson already ready" : "Checkpoints survive refreshes"}</span></div>
+      <div className="processing-footer"><Clock3 size={14}/><span>{replayVerified ? `${elapsed} seconds into verified lesson preview` : `${timestamp(elapsed)} ${failed ? "until the last update" : "since submission"}`}</span><span>{replayVerified ? "Lesson ready" : "Checkpoints survive refreshes"}</span></div>
       {progress?.history?.length ? <details className="processing-log"><summary>{replayVerified ? "View actual reuse activity" : "View processing activity"}</summary><ol>{progress.history.map((event,i) => <li key={i}><time>{new Date(event.at*1000).toLocaleTimeString()}</time><span>{event.detail}</span></li>)}</ol></details> : null}
     </section>
     {!failed && <aside className="processing-alerts"><Bell size={23}/><h3>We’ll let you know</h3><p>{replayVerified ? "The lesson is already ready. Completion alerts may arrive before this review ends." : "Keep this app tab open. You can visit another page in Blindspot while processing continues."}</p>

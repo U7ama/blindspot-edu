@@ -30,10 +30,8 @@
   },
   "include": [
     "next-env.d.ts",
-    "src/app/**/*.ts",
-    "src/app/**/*.tsx",
-    "src/components/adaptive/**/*.tsx",
-    "src/lib/adaptive.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
     "tailwind.config.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
