@@ -2,11 +2,11 @@
 
 **Learn the step your lecture assumed. Check it, practise it, and return to the lesson with evidence.**
 
-[Try the live app](https://blindspot-edu.online) · [Open the lecture library](https://blindspot-edu.online/workspace) · [Download the demo lecture](https://github.com/U7ama/blindspot-edu/raw/refs/heads/main/assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4)
+[Try the live app](https://blindspot-edu.online) · [Watch the complete demo](https://youtu.be/krE6TKkHGLw) · [Open the lecture library](https://blindspot-edu.online/workspace) · [Download the demo lecture](https://github.com/U7ama/blindspot-edu/raw/refs/heads/main/assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4)
 
 Built by **Usama Aslam** for **AWS Zero to Shipped** · **#social-good · #community**
 
-<!-- Add the public narrated-demo URL and published Builder Center project URL here when available. Do not link local video paths or private evidence files. -->
+<!-- Add the published Builder Center project URL here when available. Do not link local video paths or private evidence files. -->
 
 ## The problem that started it
 
@@ -83,7 +83,7 @@ The toolkit connected the **coding agents building and operating the app** to AW
 - **Matching resources:** AWS console captures show CloudFormation stack **`blindspot-pilot`** in **`us-east-1`**, its EC2 host, S3 media storage, and Systems Manager command history.
 - **Working result:** The narrated demonstration covers the live learning flow, the agents' Skills/MCP setup and operations, AWS resources, and classroom feedback.
 
-These captures were collected for the Builder Center submission; tool configuration and Skills screenshots are accompanied by successful AWS calls and matching console evidence. Their statuses are dated observations. The infrastructure definition is inspectable in [deploy/stack.yaml](deploy/stack.yaml), and the agent workflow is documented in [AGENTS.md](AGENTS.md).
+[View Agent Toolkit connection and deployment evidence](https://youtu.be/krE6TKkHGLw?t=230). The video shows AWS Skills, actual MCP execution, and matching Systems Manager console records. Resource statuses are dated observations. The infrastructure definition is inspectable in [deploy/stack.yaml](deploy/stack.yaml), and the agent workflow is documented in [AGENTS.md](AGENTS.md).
 
 ## Architecture and active AI provider
 

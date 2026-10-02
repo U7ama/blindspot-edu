@@ -1,16 +1,16 @@
 # Blindspot Edu — Hackathon submission guide
 
-**Updated:** September 30, 2026
+**Updated:** October 2, 2026
 
-This is the current submission guide. Use its body in Builder Center and attach the selected evidence below. Technical runbooks and dated development records are supporting material. This file does not itself publish or submit a project.
+This guide records supporting submission text and remaining publication tasks. The Builder Center draft has already been edited; do not overwrite it with this earlier first-person draft. This file does not itself publish or submit a project.
 
 **Builder Center title:** Blindspot Edu — Learn the steps your lecture assumes
 **Description:** Turn a lecture recording into an evidence-linked learning path. Blindspot checks possible missing prerequisites, teaches the step a learner needs, and returns them to the source.
 **Category and lane:** #social-good (Education), #community
 **Live app:** https://blindspot-edu.online
-**Repository:** https://github.com/U7ama/blindspot-edu — currently private; the builder plans to make this same repository public at submission. Add its link to Builder Center after confirming logged-out access. The unchanged Lecture 09 video is included in this repository at `assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4`.
+**Repository:** https://github.com/U7ama/blindspot-edu — public and verified accessible while logged out on October 2, 2026. The unchanged Lecture 09 video is included at `assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4`.
 
-## Builder Center body — first-person draft
+## Supporting first-person draft
 
 My brother studies Software Engineering. He often asks me about concepts he did not fully understand in class. Sometimes the explanation was brief; sometimes the lecturer assumed students already knew the basics. Later he asks me to explain the missing step. I heard similar problems from other students. A recording preserves the lecture, but replaying it does not always reveal *which prerequisite* is causing the confusion. That experience led me to build Blindspot Edu.
 
@@ -39,9 +39,14 @@ Blindspot began with my brother asking for help with one unclear concept. It is 
 5. Answer the different follow-up question and see the lesson resume with “Passed this check.”
 6. Explore the question input, transcript, evidence notebook, concept map, and optional narration.
 
-Fresh uploads require an invitation. Judges can complete the public sample without one. For the optional upload demonstration, use [the supplied Lecture 09 video](../assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4) and paste [the local judge upload instructions](hackathon/judge-upload-instructions.md) into Builder Center: that Git-ignored block contains the actual invitation code and explains the same-repository lecture download. The public repository version of this guide intentionally omits the code.
+### Optional upload demonstration
 
-Before submission, commit and push the included asset, make the existing repository public, verify the [Lecture 09 download](https://github.com/U7ama/blindspot-edu/raw/refs/heads/main/assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4), and check that the code unlocks uploads in a fresh browser on the live app. The download URL uses the requested GitHub `main` branch; verify that branch contains the asset before publication. Use the unchanged original recording for saved-lesson reuse; download and upload still depend on network speed.
+1. Open [the workspace](https://blindspot-edu.online/workspace).
+2. Enter the invitation code supplied in the Builder Center project. It is deliberately omitted from public Git history.
+3. Download [CS501 Lecture 09 — Falcon-A and EAGLE](https://github.com/U7ama/blindspot-edu/raw/refs/heads/main/assets/CS501_Lecture09_Falcon_A_and_EAGLE.mp4).
+4. Upload the unchanged file and optionally request a completion notification.
+
+The public repository and lecture download were verified on October 2. An identical, previously processed recording can reuse its saved transcript and lesson; the screen labels this as a review of saved stages. New recordings run transcription and analysis normally and take longer.
 
 ## Architecture and active providers
 
@@ -59,22 +64,13 @@ Before submission, commit and push the included asset, make the existing reposit
 | SES | Requested one-time lesson-completion email |
 | Bedrock | Implemented adapter, inactive; access request was not approved at this time |
 
-See [the technical architecture](ARCHITECTURE.md) and [recorded deployment details](hackathon/18-deployed-architecture.md). Resource statuses in screenshots are dated observations, not a fresh uptime check.
+See [the technical architecture](ARCHITECTURE.md) and [deployment runbook](../deploy/README.md). Resource statuses in screenshots are dated observations, not a fresh uptime check.
 
-## Connection and deployment proof to attach
+## Accessible connection and deployment proof
 
-Include successful agent tool calls with the returned AWS result, then matching AWS console evidence. Skills and configuration screenshots explain setup; the actual MCP calls demonstrate account connectivity.
+[Watch the actual agent/AWS sequence](https://youtu.be/krE6TKkHGLw?t=230). It includes Codex MCP execution, matching Systems Manager console records, and Antigravity’s Skills/MCP workflow. This link is also in the Builder Center draft and main README.
 
-| Evidence | File |
-|---|---|
-| Codex AWS MCP execution | [Codex tool call](hackathon/deployment-evidence/03-codex-aws-mcp.png) |
-| Antigravity AWS MCP execution | [Antigravity tool call](hackathon/deployment-evidence/01-antigravity-aws-mcp.png) |
-| Corresponding AWS action | [Systems Manager console history](hackathon/deployment-evidence/07-aws-console-ssm-history.png) |
-| Infrastructure stack | [CloudFormation console](hackathon/deployment-evidence/12-aws-cloudformation.png) |
-| AWS compute and media | [EC2 console](hackathon/deployment-evidence/13-aws-ec2-console.png), [S3 console](hackathon/deployment-evidence/14-aws-s3-console.png) |
-| Bedrock decision, September 28 | [Support response](hackathon/deployment-evidence/18-bedrock-access-decision-20260928.png) |
-
-The [full evidence catalog](hackathon/17-agent-aws-evidence.md) retains additional Skills, service, and structured-result records. Attach images directly to Builder Center; local relative links are not accessible to judges there. Never attach API/AWS credentials, cookies, or signed URLs. The invitation code is deliberately shared in the Builder Center judge instructions; keep it out of screenshots and public Git history.
+Supporting screenshots and structured results remain in private operator records under `docs/hackathon/`. That directory is Git-ignored; its local paths are not public evidence links. Attach selected screenshots directly to Builder Center if desired. Never attach credentials, cookies, or signed URLs. Skills and configuration explain setup; successful API calls demonstrate connectivity.
 
 ## Student feedback and permissions
 
@@ -89,15 +85,14 @@ Three university students and one software engineer tested the app. These are pa
 
 All four reported that it helped their learning. These reports describe their experiences; no score, retention, or time-saving improvement was measured. Students requested in-class recording and completion notifications, which shaped the implemented product.
 
-[Permission and attribution record](hackathon/11-lecture-permission.md) · [Feedback record](hackathon/12-pilot-results.md). The builder confirmed permission for all photos and videos included in the demonstration.
+The builder confirmed permission for the recordings, photos, and videos included in the demonstration. [Public asset attribution](../assets/README.md). Detailed permission and feedback records are retained privately.
 
 ## Final video
 
 The approved version is **5:18**, with synchronized Amazon Polly Stephen generative narration. It covers the problem, complete learning journey, agent toolkit usage, matching AWS deployment evidence, and classroom feedback.
 
-- Local video: `/home/usama/Videos/hackathon_videos/blindspot-demo-polly-synced.mp4`
-- Script: [final synchronized narration](hackathon/26-story-video-voiceover.md)
-- Public video URL: **add after upload and logged-out playback verification**.
+- Local video: `/home/usama/Videos/hackathon_videos/blindspot-edu.mp4`
+- Hosted video: [Watch the complete demonstration](https://youtu.be/krE6TKkHGLw). The unlisted video was verified playing while logged out on October 2, 2026 (5:18).
 
 The spoken statement that Bedrock was unavailable remains accurate. The written submission records the later completed support review. Keep the approved video unchanged unless its hosted playback reveals a problem.
 
@@ -108,17 +103,20 @@ The spoken statement that Bedrock was unavailable remains accurate. The written 
 - [x] Actual services and active Qwen provider documented.
 - [x] Student feedback and public-use permissions recorded.
 - [x] Final narrated video reviewed and approved by the builder.
-- [ ] Host the approved video and add its public link above and in Builder Center.
-- [ ] Commit/push the included Lecture 09 asset, make the existing repository public at submission, and verify the MP4 download while logged out.
-- [ ] Paste the actual invitation code from the Git-ignored judge instructions into Builder Center and test it against the live upload flow.
+- [x] Host the approved video, add its link above, and verify logged-out playback.
+- [x] Add the hosted video and direct Agent Toolkit evidence links to the Builder Center draft.
+- [x] Put public sample instructions before optional upload instructions (builder confirmed October 2).
+- [x] Commit/push the release code and included Lecture 09 asset.
+- [x] Repository public; MP4 download accessible while logged out.
+- [x] Judge invitation supplied in the Builder Center draft; acceptance verified on the live app.
 - [ ] Confirm eligibility, original/unpublished-before-entry status, and hackathon registration.
 - [ ] Publish the project under the hackathon with the live endpoint, attached evidence, and exactly `#social-good` and `#community`.
 - [ ] Confirm the project appears in “Your project” as published, not only saved as a draft.
 - [ ] Check the submitted project, video, and complete public sample journey while logged out.
 - [ ] Keep the application reachable during judging and monitor remaining costs; the builder's credits expire October 31.
 
-Submission deadline: **October 2, 2026, 11:59 PM PDT**, equivalent to **October 3, 11:59 AM Pakistan time**. Target October 1. [Official hackathon rules](https://builder.aws.com/build/hackathons/e83e84e5-4f4c-383b-bbe9-4a15ac195d55/zero-to-shipped?tab=rules).
+Submission deadline: **October 2, 2026, 11:59 PM PDT**, equivalent to **October 3, 11:59 AM Pakistan time**. [Official hackathon rules](https://builder.aws.com/build/hackathons/e83e84e5-4f4c-383b-bbe9-4a15ac195d55/zero-to-shipped?tab=rules).
 
 ## Reading map
 
-The [main README](../README.md) is the public entry point for judges: it includes the story, demo instructions, AWS and Agent Toolkit usage, active provider, student feedback, and verification. This draft supplies the Builder Center body and publication checklist; its private attachments are uploaded separately to Builder Center. Developers can use the [deployment runbook](../deploy/README.md), [architecture](ARCHITECTURE.md), and [release verification](hackathon/14-release-verification.md). Retained deployment, compiler-repair, and YouTube-import records describe dated observations; they do not supersede the active configuration. Obsolete feature plans and superseded video scripts have been removed from this documentation tree.
+The [main README](../README.md) is the public entry point for judges: it includes the story, demo instructions, AWS and Agent Toolkit usage, active provider, student feedback, and verification. This guide records supporting submission text and publication tasks. The actual Builder Center draft contains the judge invitation and final browser edits. Developers can use the [deployment runbook](../deploy/README.md), [architecture](ARCHITECTURE.md), and [release checklist](RELEASE_PLAN.md). Retained deployment, compiler-repair, and YouTube-import records describe dated observations; they do not supersede the active configuration. Obsolete feature plans and superseded video scripts have been removed from this documentation tree.

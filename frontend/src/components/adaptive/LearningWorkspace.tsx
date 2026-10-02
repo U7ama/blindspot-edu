@@ -1264,7 +1264,7 @@ export default function LearningWorkspace() {
                                   {isPassed ? (
                                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/40">
                                       <CheckCircle2 className="w-3.5 h-3.5" />
-                                      Verified Mastered
+                                      Passed this check
                                     </span>
                                   ) : isNeedsHelp ? (
                                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-400 border border-amber-500/40">
